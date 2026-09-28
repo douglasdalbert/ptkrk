@@ -71,9 +71,13 @@ def request_snapshot() -> list[dict]:
     with connection() as database:
         rows = database.execute(
             """SELECT requests.id, requests.video_id, requests.status, requests.title,
-                      requests.error, requests.created_at, clients.name AS client_name
+                 requests.error, requests.created_at, clients.name AS client_name,
+                 ready_queue.position AS position
                FROM requests JOIN clients ON clients.id = requests.client_id
-               ORDER BY requests.created_at, requests.rowid"""
+             LEFT JOIN ready_queue ON ready_queue.request_id = requests.id
+             ORDER BY CASE WHEN requests.status = 'ready' AND ready_queue.position IS NOT NULL
+                     THEN 0 ELSE 1 END,
+                   ready_queue.position, requests.created_at, requests.rowid"""
         ).fetchall()
     return [dict(row) for row in rows]
 

@@ -43,5 +43,20 @@ def initialize() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS requests_status_idx ON requests(status, created_at);
+            CREATE TABLE IF NOT EXISTS ready_queue (
+                request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS accepted_counts (
+                client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+                total INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
+        database.execute("BEGIN IMMEDIATE")
+        queued = {row[0] for row in database.execute("SELECT request_id FROM ready_queue")}
+        position = database.execute("SELECT COALESCE(MAX(position), 0) FROM ready_queue").fetchone()[0]
+        for row in database.execute("SELECT id FROM requests WHERE status = 'ready' ORDER BY created_at, rowid"):
+            if row["id"] not in queued:
+                position += 1
+                database.execute("INSERT INTO ready_queue (request_id, position) VALUES (?, ?)", (row["id"], position))

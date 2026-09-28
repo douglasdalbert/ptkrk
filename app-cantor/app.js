@@ -159,7 +159,9 @@ function renderRequests(items) {
     details.append(title, singerName);
     const status = document.createElement("span");
     status.className = `status ${item.status}`;
-    status.textContent = statuses[item.status] || item.status;
+    status.textContent = item.status === "ready" && item.position
+      ? `#${item.position} · Pronto`
+      : (statuses[item.status] || item.status);
     row.append(placeholder, details, status);
     content.append(row);
   }

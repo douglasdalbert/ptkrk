@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias e `app-cantor` inicial com pedidos ao vivo; fila justa, `app-tv`, convite, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-cantor` inicial e ordem persistida dos vídeos prontos; `app-tv`, convite, reprodução, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -80,7 +80,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [ ] Exibir no `app-tv` QR e endereço da festa para abrir `app-cantor` pela LAN, renovando convite no reset; testar leitura na TV e rejeição de QR antigo.
 - [x] Exibir no celular os estados de download e prévias já disponíveis na API; confirmar push em navegador sem polling dos celulares.
 - [x] Adicionar WebSocket autenticado para publicar alterações de pedidos; observador único do SQLite no servidor enquanto o worker é outro processo.
-- [ ] Implementar fila justa, quatro posições protegidas, três perdas e aceite, com posições reais e avisos no celular.
+- [x] Ordenar vídeos prontos em rodadas por cantor, preservando os quatro primeiros e favorecendo menos apresentações aceitas; expor posições no celular e testar os exemplos A/B/C.
+- [ ] Implementar transições da fila ao cantar/recusar, três perdas e aceite, com avisos no celular e atualização das apresentações aceitas.
 - [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
 - [ ] Implementar `Ctrl+Alt+N` somente no `app-tv` com reset integral no servidor, limpeza da mídia e invalidação/desconexão de todos os clientes.
 - [ ] Testar reset durante vídeo, aceite e download, com cliente conectado e offline, e repetição do atalho sem ressuscitar dados antigos.
@@ -110,4 +111,4 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - `docker compose up -d --build` inicia `app` e `worker`. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. A interface inicial do celular está em `http://localhost:8000/cantor` no host, ou `http://IP_DO_HOST:8000/cantor` na mesma rede após conferir firewall/Wi-Fi. Ainda não existe interface da TV.
 - API inicial: `POST /api/clients` recebe `{"name":"Nome"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"youtubeCode":"glvVYIhdWlU"}` com `Authorization: Bearer TOKEN` (não recebe URL inteira); `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. Pedidos prontos têm JPEG em `GET /api/requests/{id}/preview` (mesmo cabeçalho Bearer). O worker processa pedidos pendentes; não há fila de reprodução nem reset implementados ainda. Rodar testes sem baixar vídeos externos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
-- A porta pode ser alterada com `KARAOKE_PORT` no ambiente. O celular usa `ws` nesta fase; o microfone exigirá HTTPS confiável e `wss` em uma etapa posterior. A interface atual não apresenta posições de fila ou placar reais; os campos de recorde permanecem vazios até existir pontuação.
+- A porta pode ser alterada com `KARAOKE_PORT` no ambiente. O celular usa `ws` nesta fase; o microfone exigirá HTTPS confiável e `wss` em uma etapa posterior. Apenas pedidos prontos recebem posição real da fila; pedidos em preparo e com erro não recebem posição. Ainda não há convites nem avanço automático da fila; os campos de recorde permanecem vazios até existir pontuação.

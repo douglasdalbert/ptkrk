@@ -2,6 +2,7 @@ import logging
 import time
 
 from app.media import create_preview, download_video
+from app.queue import enqueue_ready
 from app.storage import connection, initialize
 
 logging.basicConfig(level=logging.INFO)
@@ -30,10 +31,12 @@ def process_next() -> bool:
             )
     else:
         with connection() as database:
+            database.execute("BEGIN IMMEDIATE")
             database.execute(
                 "UPDATE requests SET status = 'ready', title = ? WHERE id = ?",
                 (title, item["id"]),
             )
+            enqueue_ready(database, item["id"])
     return True
 
 
