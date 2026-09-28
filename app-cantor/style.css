@@ -40,6 +40,14 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .error { color: var(--pink); font-size: 13px; }
 .session-header { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding-top: 28px; }
 .session-header h1 { margin: 0 0 26px; overflow-wrap: anywhere; font-size: 30px; }
+.invitation { margin: 0 0 24px; padding: 16px; background: #252a22; border: 1px solid var(--lime); border-radius: 4px; }
+.invitation .eyebrow { color: var(--lime); }
+.invitation-row { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+.invitation h2 { margin: 0; font-size: 18px; }
+.invitation p { margin: 5px 0 12px; font-size: 12px; color: var(--muted); }
+.invitation strong { color: var(--lime); font-family: Georgia, serif; font-size: 32px; }
+.invitation .primary { width: 100%; }
+.invitation #invitation-message { min-height: 15px; margin: 8px 0 0; }
 .text-button { background: transparent; color: var(--muted); border: 0; text-decoration: underline; padding: 4px 0; white-space: nowrap; font-size: 12px; }
 .request-form { padding: 20px 0 12px; border-top: 1px solid var(--border); }
 .request-form label { display: block; margin-bottom: 12px; }

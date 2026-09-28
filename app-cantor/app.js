@@ -6,10 +6,13 @@ const entryForm = document.querySelector("#entry-form");
 const requestForm = document.querySelector("#request-form");
 const requestList = document.querySelector("#request-list");
 const previewCache = new Map();
+const invitationView = document.querySelector("#invitation");
+const acceptButton = document.querySelector("#accept-button");
 let singer = null;
 let socket = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
+let currentInvitation = null;
 
 function connectionState(text, online = false) {
   connectionLabel.textContent = text;
@@ -41,6 +44,8 @@ function youtubeCode(input) {
 
 function clearSession() {
   singer = null;
+  currentInvitation = null;
+  invitationView.hidden = true;
   localStorage.removeItem(storageKey);
   clearTimeout(reconnectTimer);
   socket?.close();
@@ -99,6 +104,7 @@ function connect() {
       reconnectDelay = 1000;
       connectionState("Ao vivo", true);
       renderRequests(message.items);
+      renderInvitation(message.invitation, message.items);
     }
   });
   current.addEventListener("close", (event) => {
@@ -167,6 +173,45 @@ function renderRequests(items) {
   }
   requestList.replaceChildren(content);
 }
+
+function updateInvitationClock() {
+  if (!currentInvitation || currentInvitation.accepted) return;
+  const seconds = Math.max(0, Math.ceil((currentInvitation.deadline_ms - Date.now()) / 1000));
+  document.querySelector("#invitation-clock").textContent = `${seconds}s`;
+  acceptButton.disabled = seconds === 0;
+}
+
+function renderInvitation(invitation, items) {
+  if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id && item.client_id === singer.client_id)) {
+    currentInvitation = null;
+    invitationView.hidden = true;
+    return;
+  }
+  const isNew = currentInvitation?.request_id !== invitation.request_id;
+  currentInvitation = invitation;
+  invitationView.hidden = false;
+  const item = items.find((request) => request.id === invitation.request_id);
+  document.querySelector("#invitation-song").textContent = item.title || item.video_id;
+  document.querySelector("#invitation-clock").hidden = invitation.accepted;
+  acceptButton.hidden = invitation.accepted;
+  document.querySelector("#invitation-message").textContent = invitation.accepted ? "Confirmado. Aguarde a TV." : "";
+  if (!invitation.accepted) updateInvitationClock();
+  if (isNew && !invitation.accepted && "vibrate" in navigator) navigator.vibrate([250, 150, 250]);
+}
+
+setInterval(updateInvitationClock, 250);
+
+acceptButton.addEventListener("click", async () => {
+  if (!currentInvitation || currentInvitation.accepted) return;
+  acceptButton.disabled = true;
+  try {
+    await api(`/api/requests/${encodeURIComponent(currentInvitation.request_id)}/accept`, { method: "POST" });
+    document.querySelector("#invitation-message").textContent = "Confirmado. Aguarde a TV.";
+  } catch (problem) {
+    document.querySelector("#invitation-message").textContent = problem.message;
+    updateInvitationClock();
+  }
+});
 
 entryForm.addEventListener("submit", async (event) => {
   event.preventDefault();

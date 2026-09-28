@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.invitations import accept_invitation, expire_invitation, invitation_state
 from app.media import MEDIA_ROOT
 from app.storage import connection, initialize
 
@@ -70,7 +72,7 @@ def authenticated_client(authorization: str = Header(default="")) -> str:
 def request_snapshot() -> list[dict]:
     with connection() as database:
         rows = database.execute(
-            """SELECT requests.id, requests.video_id, requests.status, requests.title,
+            """SELECT requests.id, requests.client_id, requests.video_id, requests.status, requests.title,
                  requests.error, requests.created_at, clients.name AS client_name,
                  ready_queue.position AS position
                FROM requests JOIN clients ON clients.id = requests.client_id
@@ -82,14 +84,23 @@ def request_snapshot() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def party_snapshot() -> dict:
+    with connection() as database:
+        invitation = invitation_state(database)
+    return {"type": "requests", "items": request_snapshot(), "invitation": invitation}
+
+
 async def watch_requests() -> None:
-    previous = request_snapshot()
+    previous = party_snapshot()
     while True:
         await asyncio.sleep(1)
+        with connection() as database:
+            database.execute("BEGIN IMMEDIATE")
+            expire_invitation(database, time.time())
         if not subscribers:
-            previous = request_snapshot()
+            previous = party_snapshot()
             continue
-        current = request_snapshot()
+        current = party_snapshot()
         if current != previous:
             previous = current
             for subscriber in tuple(subscribers):
@@ -108,7 +119,7 @@ async def requests_socket(websocket: WebSocket) -> None:
         if not isinstance(token, str) or client_for_token(token) is None:
             await websocket.close(code=1008)
             return
-        await websocket.send_json({"type": "requests", "items": request_snapshot()})
+        await websocket.send_json(party_snapshot())
         subscribers.add(websocket)
         while True:
             await websocket.receive_text()
@@ -159,6 +170,17 @@ def create_request(payload: NewRequest, client_id: str = Depends(authenticated_c
 @app.get("/api/requests")
 def list_requests(client_id: str = Depends(authenticated_client)) -> list[dict]:
     return request_snapshot()
+
+
+@app.post("/api/requests/{request_id}/accept")
+def accept_request(request_id: str, client_id: str = Depends(authenticated_client)) -> dict[str, str]:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        now = time.time()
+        expire_invitation(database, now)
+        if not accept_invitation(database, request_id, client_id, now):
+            raise HTTPException(409, "Convite indisponível, vencido ou de outra pessoa")
+    return {"status": "accepted"}
 
 
 @app.get("/api/requests/{request_id}/preview")

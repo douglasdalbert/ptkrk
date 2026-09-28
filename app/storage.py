@@ -51,6 +51,16 @@ def initialize() -> None:
                 client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
                 total INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS invitation (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                request_id TEXT NOT NULL REFERENCES requests(id),
+                deadline REAL NOT NULL,
+                accepted INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS missed_invitations (
+                request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+                total INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
         database.execute("BEGIN IMMEDIATE")

@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-cantor` inicial e ordem persistida dos vídeos prontos; `app-tv`, convite, reprodução, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-cantor` inicial, fila pronta e regras de convite/aceite persistidas; controle da TV, reprodução, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -81,7 +81,9 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Exibir no celular os estados de download e prévias já disponíveis na API; confirmar push em navegador sem polling dos celulares.
 - [x] Adicionar WebSocket autenticado para publicar alterações de pedidos; observador único do SQLite no servidor enquanto o worker é outro processo.
 - [x] Ordenar vídeos prontos em rodadas por cantor, preservando os quatro primeiros e favorecendo menos apresentações aceitas; expor posições no celular e testar os exemplos A/B/C.
-- [ ] Implementar transições da fila ao cantar/recusar, três perdas e aceite, com avisos no celular e atualização das apresentações aceitas.
+- [x] Implementar prazo persistido de 20 s, aceite autenticado e único, avanço do primeiro para terceiro ao perder o prazo, remoção na terceira perda e contagem das apresentações aceitas; testar reinício.
+- [x] Mostrar aviso/contagem/OK apenas ao dono do convite no `app-cantor`, com vibração opcional e WebSocket; o relógio da interface não decide o aceite.
+- [ ] Integrar ativação de convites ao `app-tv` e transição após terminar a apresentação; sem TV ativa os prazos ainda não são iniciados para não remover músicas antes de poder tocá-las.
 - [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
 - [ ] Implementar `Ctrl+Alt+N` somente no `app-tv` com reset integral no servidor, limpeza da mídia e invalidação/desconexão de todos os clientes.
 - [ ] Testar reset durante vídeo, aceite e download, com cliente conectado e offline, e repetição do atalho sem ressuscitar dados antigos.
@@ -111,4 +113,4 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - `docker compose up -d --build` inicia `app` e `worker`. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. A interface inicial do celular está em `http://localhost:8000/cantor` no host, ou `http://IP_DO_HOST:8000/cantor` na mesma rede após conferir firewall/Wi-Fi. Ainda não existe interface da TV.
 - API inicial: `POST /api/clients` recebe `{"name":"Nome"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"youtubeCode":"glvVYIhdWlU"}` com `Authorization: Bearer TOKEN` (não recebe URL inteira); `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. Pedidos prontos têm JPEG em `GET /api/requests/{id}/preview` (mesmo cabeçalho Bearer). O worker processa pedidos pendentes; não há fila de reprodução nem reset implementados ainda. Rodar testes sem baixar vídeos externos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
-- A porta pode ser alterada com `KARAOKE_PORT` no ambiente. O celular usa `ws` nesta fase; o microfone exigirá HTTPS confiável e `wss` em uma etapa posterior. Apenas pedidos prontos recebem posição real da fila; pedidos em preparo e com erro não recebem posição. Ainda não há convites nem avanço automático da fila; os campos de recorde permanecem vazios até existir pontuação.
+- A porta pode ser alterada com `KARAOKE_PORT` no ambiente. O celular usa `ws` nesta fase; o microfone exigirá HTTPS confiável e `wss` em uma etapa posterior. Apenas pedidos prontos recebem posição real da fila; pedidos em preparo e com erro não recebem posição. O servidor aceita `POST /api/requests/{id}/accept` somente do dono durante um convite iniciado; a próxima etapa é a TV iniciar os convites e concluir a música. Até lá, nenhum prazo começa automaticamente. Os campos de recorde permanecem vazios até existir pontuação.
