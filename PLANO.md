@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: base Docker executável com endpoint de saúde; interface, fila, download e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API inicial com cadastro, pedidos, SQLite e worker de download; interface, fila, pré-análise de voz e pontuação ainda não implementadas. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -55,7 +55,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Se as interfaces forem separadas em projetos de frontend TypeScript, seus nomes serão **`app-cantor`** (celular) e **`app-tv`** (host/TV); compartilharão API e WebSocket, sem criar dois backends nem dois projetos Docker Compose. Framework a decidir após protótipo. Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
 - **SQLite** em volume Docker nomeado, modo WAL, para fila, clientes, análises e recordes; volume separado para mídia. Primeiro MVP: tarefas persistidas no banco, reivindicadas transacionalmente por um worker. Redis ou outro broker só se medições exigirem. Sem múltiplas réplicas de app até coordenar relógios/fila.
-- Compose `name: karaoke` já configura o serviço backend provisoriamente chamado `app`, volumes persistentes separados (`db_data` e `media_data`) e porta `${KARAOKE_PORT:-8000}`. O Docker Desktop agrupa os containers sob `karaoke`, independentemente de `saope`; os nomes `app-cantor` e `app-tv` identificam as interfaces, não projetos Compose adicionais. Não criar pasta dentro de `saope` nem tocar nos seus containers. Adicionar o `worker` quando houver processamento a executar. Expor apenas o backend para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
+- Compose `name: karaoke` já configura o backend `app`, o `worker` de download, volumes persistentes separados (`db_data` e `media_data`) e porta `${KARAOKE_PORT:-8000}`. O Docker Desktop agrupa os containers sob `karaoke`, independentemente de `saope`; os nomes `app-cantor` e `app-tv` identificam as futuras interfaces, não projetos Compose adicionais. Não criar pasta dentro de `saope` nem tocar nos seus containers. Expor apenas o backend para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
 - **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). O QR deve apontar para um endereço LAN que os celulares consigam abrir e, quando houver microfone, para a origem HTTPS usada pelo `app-cantor` com `wss`; `localhost` na TV não aponta para o host no celular. Uma opção sem custos é CA local (`mkcert`), certificado para IP/hostname estável e proxy HTTPS no Compose, mas cada celular deve instalar e confiar na CA antes de usar o microfone; ler o QR não instala essa confiança. Alternativa a avaliar: certificado público gratuito por desafio DNS, se houver domínio/hostname e DNS local disponíveis. Testar permissão, autoplay e suspensão da aba.
 - Validar URL/origem e tamanho dos uploads, escapar títulos, limitar pedidos e negar acesso do servidor a endereços arbitrários internos. Celulares não controlam a TV.
 
@@ -72,10 +72,12 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 ### 1. MVP: festa e fila
 
 - [x] Criar projeto Compose `karaoke`, serviço web mínimo, volumes e validar subida no Docker Desktop (`GET /health`).
-- [ ] Implementar banco SQLite, worker de download/análise e testar acesso real pela LAN.
+- [x] Implementar banco SQLite, cadastro por nome com sessão e API de pedidos com validação de URLs do YouTube.
+- [x] Adicionar worker independente de download com `yt-dlp` e FFmpeg, limite de 12 minutos/300 MB e testes sem mídia real.
+- [ ] Testar download autorizado real, prévia, extração/análise de áudio e acesso real pela LAN.
 - [ ] Implementar `app-cantor`: entrada por nome, sessão e interface mobile compacta.
 - [ ] Exibir no `app-tv` QR e endereço da festa para abrir `app-cantor` pela LAN, renovando convite no reset; testar leitura na TV e rejeição de QR antigo.
-- [ ] Implementar download de links do YouTube permitidos, estados de preparo e prévias.
+- [ ] Exibir no celular os estados de download já disponíveis na API e gerar prévias dos vídeos preparados.
 - [ ] Implementar fila justa, quatro posições protegidas, três perdas, aceite e WebSocket.
 - [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
 - [ ] Implementar `Ctrl+Alt+N` somente no `app-tv` com reset integral no servidor, limpeza da mídia e invalidação/desconexão de todos os clientes.
@@ -104,5 +106,6 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Execução atual
 
-- `docker compose up -d --build` inicia a base. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. Esta URL ainda não é a interface do jogo.
+- `docker compose up -d --build` inicia `app` e `worker`. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. Ainda não existe interface web do jogo.
+- API inicial: `POST /api/clients` recebe `{"name":"Nome"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"url":"https://www.youtube.com/watch?v=..."}` com `Authorization: Bearer TOKEN`; `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. O worker processa pedidos pendentes; não há fila de reprodução nem reset implementados ainda. Rodar testes sem baixar vídeos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
 - Para acesso de outro aparelho na mesma rede, usar `http://IP_DO_HOST:8000/health` após confirmar firewall e Wi-Fi; a porta pode ser alterada com `KARAOKE_PORT` no ambiente. O microfone do celular exigirá HTTPS confiável em uma etapa posterior.

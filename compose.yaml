@@ -21,6 +21,14 @@ services:
       timeout: 5s
       retries: 3
 
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - db_data:/data
+      - media_data:/media
+    restart: unless-stopped
+
 volumes:
   db_data:
   media_data:
