@@ -10,7 +10,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - **Entrada no celular:** informar nome; o servidor cria um `client_id` persistido no navegador. Não confiar no ID sozinho como autenticação: emitir também um segredo de sessão para validar aceite e eventos do microfone.
 - **Tela do celular:** mostrar toda a fila em ordem, autor e título, quatro posições protegidas, melhor pontuação pessoal e melhor pontuação geral (autor e música). Receber alterações por WebSocket, com snapshot integral na reconexão; sem polling de 10 segundos.
-- **Pedido:** celular envia link de mídia e sua identidade. Host valida origem, prepara mídia e análise; pedidos ainda em preparo não entram na fila pronta. Mostrar estados de preparo, falha e pronto.
+- **Pedido:** celular envia link do YouTube e sua identidade. Host valida o link, baixa o vídeo, prepara mídia e análise; pedidos ainda em preparo não entram na fila pronta. Mostrar estados de preparo, falha e pronto.
 - **Convite:** dono do primeiro pedido vê aviso com botão OK e prazo de 20 s (configurável). Tentar vibrar, quando suportado; notificações/vibração em segundo plano não são garantidas. Relógio e aceite são validados no servidor.
 - **TV durante a música:** vídeo e áudio originais ocupam a tela com barra animada e pontuação por cima. Usar fullscreen do navegador (F11), pois fullscreen nativo do player pode ocultar overlays.
 - **TV entre músicas:** prévia do próximo vídeo ocupa cerca de 50% da tela com nome, título e contagem regressiva; abaixo, três próximas prévias lado a lado, cada uma com cerca de 15% da área, nome e título. Adaptar para filas com menos de quatro pedidos.
@@ -28,8 +28,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Mídia e limite legal
 
-- Desejo: receber link do YouTube, baixar vídeo no host, analisar áudio antes de tocar, guardar intervalos e reproduzir vídeo/áudio original na TV. **Pendente:** confirmar direitos de download, armazenamento e exibição; link público não garante esses direitos e há regras da plataforma. Não assumir que todo link será baixável nem especificar downloader obrigatório antes disso.
-- Primeira fonte técnica segura: arquivos locais com uso autorizado. FFmpeg extrai áudio mono para análise e frame de prévia. Se YouTube for indispensável, validar origem permitida, método autorizado e restrições do player incorporado (overlay, tempo, anúncios, disponibilidade); embed não fornece automaticamente arquivo para análise.
+- **Requisito obrigatório desde o MVP:** receber link do YouTube, baixar o vídeo no host, analisar áudio antes de tocar, guardar intervalos e reproduzir o arquivo local com vídeo e áudio originais na TV. Usar `yt-dlp` para obtenção de vídeos acessíveis e `FFmpeg` para normalização/extração de áudio e prévia; tratar falhas e mudanças do YouTube sem travar a fila. Não contornar DRM nem controles de acesso.
+- Aceitar apenas URLs de vídeo do YouTube (normalizar e validar ID, não permitir download de URLs arbitrárias), limitar duração/tamanho e evitar duplicar arquivo já baixado. **Pendente operacional:** confirmar que os vídeos escolhidos podem ser baixados, armazenados e exibidos conforme direitos e termos aplicáveis. Link público não garante isso; não prometer suporte a todo vídeo.
 - Processar mídia antes do show: separar vocais opcionalmente, detectar regiões com voz do cantor e intensidade relativa, armazenar `[inicio_ms, fim_ms]` com confiança por arquivo. Instrumentos e vozes do público podem produzir falsos positivos; testar com vídeos representativos. Cachear análise, limitar tamanho/duração/armazenamento e tratar codec/falhas. Nunca executar modelo pesado durante a música.
 
 ## Jogo e sincronização
@@ -45,7 +45,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Frontend web responsivo em TypeScript (framework a decidir após protótipo). Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
 - **SQLite** em volume Docker nomeado, modo WAL, para fila, clientes, análises e recordes; volume separado para mídia. Primeiro MVP: tarefas persistidas no banco, reivindicadas transacionalmente por um worker. Redis ou outro broker só se medições exigirem. Sem múltiplas réplicas de app até coordenar relógios/fila.
-- Docker Compose com `app` e `worker`, projeto `karaoke` (sem acento para compatibilidade), expondo apenas o app para a LAN. Confirmar o significado/caminho de `saope` antes de integrá-lo aos containers existentes. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
+- Docker Compose com serviços `app` e `worker` no projeto `karaoke` (sem acento para compatibilidade). O Docker Desktop os agrupa sob `karaoke`, independentemente do projeto `saope`; não criar pasta dentro dele nem tocar nos containers desse outro projeto. Expor apenas o app para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
 - **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). HTTP serve ao MVP de fila/TV; para microfone, planejar hostname/certificado confiável instalado nos aparelhos ou solução equivalente, com `wss`. Certificado autoassinado sem confiança instalada não resolve. Testar permissão, autoplay e suspensão da aba.
 - Validar URL/origem e tamanho dos uploads, escapar títulos, limitar pedidos e negar acesso do servidor a endereços arbitrários internos. Celulares não controlam a TV.
 
@@ -53,8 +53,9 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ### 0. Viabilidade e decisões
 
-- [ ] Confirmar fontes/direitos de mídia e necessidade de links do YouTube desde o MVP.
-- [ ] Confirmar o que é `saope`, recursos do PC host e rede Wi-Fi.
+- [x] Confirmar YouTube obrigatório desde o MVP e download no host.
+- [x] Confirmar `saope` como outro projeto no Docker Desktop; usar projeto Compose `karaoke` independente.
+- [ ] Confirmar direitos/fontes de vídeo permitidas e recursos do PC host e rede Wi-Fi.
 - [ ] Medir em aparelhos reais: análise de voz, eco da TV, latência e HTTPS/microfone.
 - [ ] Especificar desempates da fila e testes para os cenários A/B/C acima.
 
@@ -62,7 +63,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - [ ] Criar Compose, aplicação, worker, banco e volumes persistentes; testar LAN.
 - [ ] Implementar entrada por nome, sessão e interface mobile compacta.
-- [ ] Implementar importação de mídia autorizada, estados de preparo e prévias.
+- [ ] Implementar download de links do YouTube permitidos, estados de preparo e prévias.
 - [ ] Implementar fila justa, quatro posições protegidas, três perdas, aceite e WebSocket.
 - [ ] Implementar interface da TV, reprodução, intervalo e atalhos de barra/cores.
 - [ ] Testar reinício, reconexão e múltiplos celulares.
@@ -79,11 +80,10 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [ ] Testar separação vocal/modelos melhores se análise simples for insuficiente.
 - [ ] Implementar bônus de intensidade, duração e teto após validação real.
 - [ ] Definir recuperação de identidade, limpeza de cache e avisos em segundo plano.
-- [ ] Integrar fonte YouTube apenas com caminho autorizado e estável.
+- [ ] Revisar resiliência do downloader a mudanças do YouTube e estratégias de cache/limpeza.
 
 ## Perguntas pendentes
 
-1. Que mídias podem ser baixadas/processadas legalmente? YouTube é obrigatório desde a primeira versão?
-2. `saope` é pasta do disco, projeto/grupo do Docker Desktop ou outra organização? Onde manter dados persistentes?
-3. Podemos testar um celular cantando perto da TV (com e sem fones) e qual é o hardware do host?
-4. A primeira entrega pode ser a festa com fila/vídeo, deixando pontuação automática para a etapa seguinte?
+1. Quais vídeos do YouTube estão autorizados para baixar/processar/exibir neste uso?
+2. Podemos testar um celular cantando perto da TV (com e sem fones) e qual é o hardware do host?
+3. A primeira entrega pode ser a festa com fila/vídeo, deixando pontuação automática para a etapa seguinte?
