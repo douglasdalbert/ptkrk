@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: planejamento; nenhuma funcionalidade implementada. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: base Docker executável com endpoint de saúde; interface, fila, download e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -45,7 +45,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Frontend web responsivo em TypeScript (framework a decidir após protótipo). Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
 - **SQLite** em volume Docker nomeado, modo WAL, para fila, clientes, análises e recordes; volume separado para mídia. Primeiro MVP: tarefas persistidas no banco, reivindicadas transacionalmente por um worker. Redis ou outro broker só se medições exigirem. Sem múltiplas réplicas de app até coordenar relógios/fila.
-- Docker Compose com serviços `app` e `worker` no projeto `karaoke` (sem acento para compatibilidade). O Docker Desktop os agrupa sob `karaoke`, independentemente do projeto `saope`; não criar pasta dentro dele nem tocar nos containers desse outro projeto. Expor apenas o app para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
+- Compose `name: karaoke` já configura o serviço `app`, volumes persistentes separados (`db_data` e `media_data`) e porta `${KARAOKE_PORT:-8000}`. O Docker Desktop agrupa os containers sob `karaoke`, independentemente de `saope`; não criar pasta dentro desse outro projeto nem tocar nos seus containers. Adicionar o `worker` quando houver processamento a executar. Expor apenas o app para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
 - **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). HTTP serve ao MVP de fila/TV; para microfone, planejar hostname/certificado confiável instalado nos aparelhos ou solução equivalente, com `wss`. Certificado autoassinado sem confiança instalada não resolve. Testar permissão, autoplay e suspensão da aba.
 - Validar URL/origem e tamanho dos uploads, escapar títulos, limitar pedidos e negar acesso do servidor a endereços arbitrários internos. Celulares não controlam a TV.
 
@@ -61,7 +61,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ### 1. MVP: festa e fila
 
-- [ ] Criar Compose, aplicação, worker, banco e volumes persistentes; testar LAN.
+- [x] Criar projeto Compose `karaoke`, serviço web mínimo, volumes e validar subida no Docker Desktop (`GET /health`).
+- [ ] Implementar banco SQLite, worker de download/análise e testar acesso real pela LAN.
 - [ ] Implementar entrada por nome, sessão e interface mobile compacta.
 - [ ] Implementar download de links do YouTube permitidos, estados de preparo e prévias.
 - [ ] Implementar fila justa, quatro posições protegidas, três perdas, aceite e WebSocket.
@@ -87,3 +88,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 1. Quais vídeos do YouTube estão autorizados para baixar/processar/exibir neste uso?
 2. Podemos testar um celular cantando perto da TV (com e sem fones) e qual é o hardware do host?
 3. A primeira entrega pode ser a festa com fila/vídeo, deixando pontuação automática para a etapa seguinte?
+
+## Execução atual
+
+- `docker compose up -d --build` inicia a base. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. Esta URL ainda não é a interface do jogo.
+- Para acesso de outro aparelho na mesma rede, usar `http://IP_DO_HOST:8000/health` após confirmar firewall e Wi-Fi; a porta pode ser alterada com `KARAOKE_PORT` no ambiente. O microfone do celular exigirá HTTPS confiável em uma etapa posterior.

@@ -1,0 +1,26 @@
+name: karaoke
+
+services:
+  app:
+    build: .
+    ports:
+      - "${KARAOKE_PORT:-8000}:8000"
+    volumes:
+      - db_data:/data
+      - media_data:/media
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  db_data:
+  media_data:
