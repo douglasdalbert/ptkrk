@@ -6,8 +6,10 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.media import MEDIA_ROOT
 from app.storage import connection, initialize
 
 
@@ -105,3 +107,17 @@ def list_requests(client_id: str = Depends(authenticated_client)) -> list[dict]:
                ORDER BY requests.created_at, requests.rowid"""
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+@app.get("/api/requests/{request_id}/preview")
+def request_preview(request_id: str, client_id: str = Depends(authenticated_client)) -> FileResponse:
+    with connection() as database:
+        request = database.execute(
+            "SELECT video_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)
+        ).fetchone()
+    if request is None:
+        raise HTTPException(404, "Prévia indisponível")
+    preview = MEDIA_ROOT / "previews" / f"{request['video_id']}.jpg"
+    if not preview.is_file():
+        raise HTTPException(404, "Prévia indisponível")
+    return FileResponse(preview, media_type="image/jpeg")

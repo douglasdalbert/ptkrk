@@ -1,7 +1,7 @@
 import logging
 import time
 
-from app.media import download_video
+from app.media import create_preview, download_video
 from app.storage import connection, initialize
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +20,7 @@ def process_next() -> bool:
 
     try:
         title = download_video(item["video_id"])
+        create_preview(item["video_id"])
     except Exception:
         logger.exception("Falha ao preparar vídeo %s", item["video_id"])
         with connection() as database:

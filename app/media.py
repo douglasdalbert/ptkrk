@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
@@ -49,3 +50,19 @@ def download_video(video_id: str) -> str:
 def check_size(progress: dict) -> None:
     if progress.get("downloaded_bytes", 0) > MAX_FILE_BYTES:
         raise ValueError("Vídeo ultrapassou 300 MB")
+
+
+def create_preview(video_id: str) -> None:
+    video = MEDIA_ROOT / "videos" / f"{video_id}.mp4"
+    preview = MEDIA_ROOT / "previews" / f"{video_id}.jpg"
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    if preview.is_file():
+        return
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "1", "-i", str(video),
+         "-frames:v", "1", "-vf", "scale=640:-2", "-y", str(preview)],
+        check=True,
+        timeout=60,
+    )
+    if not preview.is_file():
+        raise ValueError("Não foi possível gerar a prévia")

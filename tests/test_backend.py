@@ -1,11 +1,13 @@
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.main import youtube_id
+from app.main import request_preview, youtube_id
+from app.media import create_preview
 from app.storage import connection, initialize
 from app.worker import process_next
 
@@ -53,9 +55,12 @@ class WorkerTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_success_marks_request_ready(self):
-        with patch("app.worker.download_video", return_value="Minha música") as download:
+        with patch("app.worker.download_video", return_value="Minha música") as download, patch(
+            "app.worker.create_preview"
+        ) as preview:
             self.assertTrue(process_next())
         download.assert_called_once_with("dQw4w9WgXcQ")
+        preview.assert_called_once_with("dQw4w9WgXcQ")
         with connection() as database:
             row = database.execute("SELECT status, title FROM requests WHERE id = 'request'").fetchone()
         self.assertEqual((row["status"], row["title"]), ("ready", "Minha música"))
@@ -68,6 +73,35 @@ class WorkerTests(unittest.TestCase):
             row = database.execute("SELECT status, error FROM requests WHERE id = 'request'").fetchone()
         self.assertEqual(row["status"], "failed")
         self.assertTrue(row["error"])
+
+    def test_preview_requires_ready_request(self):
+        with patch("app.main.MEDIA_ROOT", Path(self.directory.name)):
+            with self.assertRaises(HTTPException) as missing:
+                request_preview("request", "client")
+            self.assertEqual(missing.exception.status_code, 404)
+            preview = Path(self.directory.name) / "previews" / "dQw4w9WgXcQ.jpg"
+            preview.parent.mkdir()
+            preview.write_bytes(b"preview")
+            with connection() as database:
+                database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            self.assertEqual(request_preview("request", "client").path, preview)
+
+
+class PreviewTests(unittest.TestCase):
+    def test_ffmpeg_creates_jpeg_from_video(self):
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "videos" / "dQw4w9WgXcQ.mp4"
+            video.parent.mkdir()
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                 "color=c=green:s=320x180:d=2", "-an", "-c:v", "mpeg4", str(video)],
+                check=True,
+                timeout=30,
+            )
+            with patch("app.media.MEDIA_ROOT", Path(directory)):
+                create_preview("dQw4w9WgXcQ")
+            preview = Path(directory) / "previews" / "dQw4w9WgXcQ.jpg"
+            self.assertTrue(preview.read_bytes().startswith(b"\xff\xd8\xff"))
 
 
 if __name__ == "__main__":

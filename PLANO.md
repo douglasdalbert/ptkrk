@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: API inicial com cadastro, pedidos, SQLite e worker de download; interface, fila, pré-análise de voz e pontuação ainda não implementadas. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API inicial com cadastro, pedidos, SQLite, worker de download e prévias; interface, fila, pré-análise de voz e pontuação ainda não implementadas. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -74,10 +74,11 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Criar projeto Compose `karaoke`, serviço web mínimo, volumes e validar subida no Docker Desktop (`GET /health`).
 - [x] Implementar banco SQLite, cadastro por nome com sessão e API de pedidos com validação de URLs do YouTube.
 - [x] Adicionar worker independente de download com `yt-dlp` e FFmpeg, limite de 12 minutos/300 MB e testes sem mídia real.
-- [ ] Testar download autorizado real, prévia, extração/análise de áudio e acesso real pela LAN.
+- [x] Gerar prévia JPEG com FFmpeg antes de marcar pedido como pronto; entregar prévia via API autenticada e testar com vídeo sintético.
+- [ ] Testar download autorizado real, extração/análise de áudio e acesso real pela LAN.
 - [ ] Implementar `app-cantor`: entrada por nome, sessão e interface mobile compacta.
 - [ ] Exibir no `app-tv` QR e endereço da festa para abrir `app-cantor` pela LAN, renovando convite no reset; testar leitura na TV e rejeição de QR antigo.
-- [ ] Exibir no celular os estados de download já disponíveis na API e gerar prévias dos vídeos preparados.
+- [ ] Exibir no celular os estados de download e prévias já disponíveis na API.
 - [ ] Implementar fila justa, quatro posições protegidas, três perdas, aceite e WebSocket.
 - [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
 - [ ] Implementar `Ctrl+Alt+N` somente no `app-tv` com reset integral no servidor, limpeza da mídia e invalidação/desconexão de todos os clientes.
@@ -107,5 +108,5 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 ## Execução atual
 
 - `docker compose up -d --build` inicia `app` e `worker`. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. Ainda não existe interface web do jogo.
-- API inicial: `POST /api/clients` recebe `{"name":"Nome"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"url":"https://www.youtube.com/watch?v=..."}` com `Authorization: Bearer TOKEN`; `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. O worker processa pedidos pendentes; não há fila de reprodução nem reset implementados ainda. Rodar testes sem baixar vídeos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
+- API inicial: `POST /api/clients` recebe `{"name":"Nome"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"url":"https://www.youtube.com/watch?v=..."}` com `Authorization: Bearer TOKEN`; `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. Pedidos prontos têm JPEG em `GET /api/requests/{id}/preview` (mesmo cabeçalho Bearer). O worker processa pedidos pendentes; não há fila de reprodução nem reset implementados ainda. Rodar testes sem baixar vídeos externos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
 - Para acesso de outro aparelho na mesma rede, usar `http://IP_DO_HOST:8000/health` após confirmar firewall e Wi-Fi; a porta pode ser alterada com `KARAOKE_PORT` no ambiente. O microfone do celular exigirá HTTPS confiável em uma etapa posterior.
