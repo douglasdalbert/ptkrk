@@ -1,12 +1,14 @@
+import asyncio
 import hashlib
 import re
 import secrets
 from contextlib import asynccontextmanager
-from urllib.parse import parse_qs, urlsplit
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.media import MEDIA_ROOT
@@ -16,12 +18,23 @@ from app.storage import connection, initialize
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     initialize()
-    yield
+    watcher = asyncio.create_task(watch_requests())
+    try:
+        yield
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Karaoke", lifespan=lifespan)
+SINGER_ROOT = Path(__file__).resolve().parent.parent / "app-cantor"
+app.mount("/cantor/assets", StaticFiles(directory=SINGER_ROOT), name="cantor-assets")
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+subscribers: set[WebSocket] = set()
 
 
 class NewClient(BaseModel):
@@ -29,45 +42,87 @@ class NewClient(BaseModel):
 
 
 class NewRequest(BaseModel):
-    url: str = Field(max_length=500)
+    youtubeCode: str = Field(min_length=11, max_length=11)
 
 
-def youtube_id(url: str) -> str:
-    try:
-        parsed = urlsplit(url)
-        port = parsed.port
-    except ValueError:
-        raise HTTPException(422, "Link de vídeo do YouTube inválido") from None
-    host = parsed.hostname
-    if parsed.scheme != "https" or parsed.username or parsed.password or port or not host:
-        raise HTTPException(422, "Use um link HTTPS de vídeo do YouTube")
-    if host in {"youtube.com", "www.youtube.com", "m.youtube.com"} and parsed.path == "/watch":
-        identifiers = parse_qs(parsed.query).get("v", [])
-        video_id = identifiers[0] if len(identifiers) == 1 else ""
-    elif host == "youtu.be" and parsed.path.count("/") == 1:
-        video_id = parsed.path[1:]
-    else:
-        video_id = ""
-    if not VIDEO_ID.fullmatch(video_id):
-        raise HTTPException(422, "Link de vídeo do YouTube inválido")
-    return video_id
+def youtube_id(code: str) -> str:
+    if not VIDEO_ID.fullmatch(code):
+        raise HTTPException(422, "Código de vídeo do YouTube inválido")
+    return code
+
+
+def client_for_token(token: str) -> str | None:
+    session_hash = hashlib.sha256(token.encode()).hexdigest()
+    with connection() as database:
+        client = database.execute("SELECT id FROM clients WHERE session_hash = ?", (session_hash,)).fetchone()
+    return client["id"] if client else None
 
 
 def authenticated_client(authorization: str = Header(default="")) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Sessão necessária")
-    session_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
-    with connection() as database:
-        client = database.execute("SELECT id FROM clients WHERE session_hash = ?", (session_hash,)).fetchone()
-    if client is None:
+    client_id = client_for_token(authorization[7:])
+    if client_id is None:
         raise HTTPException(401, "Sessão inválida")
-    return client["id"]
+    return client_id
+
+
+def request_snapshot() -> list[dict]:
+    with connection() as database:
+        rows = database.execute(
+            """SELECT requests.id, requests.video_id, requests.status, requests.title,
+                      requests.error, requests.created_at, clients.name AS client_name
+               FROM requests JOIN clients ON clients.id = requests.client_id
+               ORDER BY requests.created_at, requests.rowid"""
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+async def watch_requests() -> None:
+    previous = request_snapshot()
+    while True:
+        await asyncio.sleep(1)
+        if not subscribers:
+            previous = request_snapshot()
+            continue
+        current = request_snapshot()
+        if current != previous:
+            previous = current
+            for subscriber in tuple(subscribers):
+                try:
+                    await subscriber.send_json({"type": "requests", "items": current})
+                except (WebSocketDisconnect, RuntimeError, OSError):
+                    subscribers.discard(subscriber)
+
+
+@app.websocket("/ws/requests")
+async def requests_socket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    try:
+        message = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        token = message.get("token") if isinstance(message, dict) else None
+        if not isinstance(token, str) or client_for_token(token) is None:
+            await websocket.close(code=1008)
+            return
+        await websocket.send_json({"type": "requests", "items": request_snapshot()})
+        subscribers.add(websocket)
+        while True:
+            await websocket.receive_text()
+    except (WebSocketDisconnect, asyncio.TimeoutError, ValueError):
+        pass
+    finally:
+        subscribers.discard(websocket)
 
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/cantor", include_in_schema=False)
+def singer_page() -> FileResponse:
+    return FileResponse(SINGER_ROOT / "index.html")
 
 
 @app.post("/api/clients", status_code=201)
@@ -87,7 +142,7 @@ def create_client(payload: NewClient) -> dict[str, str]:
 
 @app.post("/api/requests", status_code=201)
 def create_request(payload: NewRequest, client_id: str = Depends(authenticated_client)) -> dict[str, str]:
-    video_id = youtube_id(payload.url)
+    video_id = youtube_id(payload.youtubeCode)
     request_id = str(uuid4())
     with connection() as database:
         database.execute(
@@ -99,14 +154,7 @@ def create_request(payload: NewRequest, client_id: str = Depends(authenticated_c
 
 @app.get("/api/requests")
 def list_requests(client_id: str = Depends(authenticated_client)) -> list[dict]:
-    with connection() as database:
-        rows = database.execute(
-            """SELECT requests.id, requests.video_id, requests.status, requests.title,
-                      requests.error, requests.created_at, clients.name AS client_name
-               FROM requests JOIN clients ON clients.id = requests.client_id
-               ORDER BY requests.created_at, requests.rowid"""
-        ).fetchall()
-    return [dict(row) for row in rows]
+    return request_snapshot()
 
 
 @app.get("/api/requests/{request_id}/preview")

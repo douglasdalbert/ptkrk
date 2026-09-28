@@ -6,31 +6,30 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.main import request_preview, youtube_id
+from app.main import NewRequest, create_request, request_preview, request_snapshot, youtube_id
 from app.media import create_preview
 from app.storage import connection, initialize
 from app.worker import process_next
 
 
-class YoutubeUrlTests(unittest.TestCase):
-    def test_valid_video_links(self):
-        for url in (
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            "https://youtu.be/dQw4w9WgXcQ?t=3",
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(youtube_id(url), "dQw4w9WgXcQ")
+class YoutubeCodeTests(unittest.TestCase):
+    def test_valid_video_code(self):
+        self.assertEqual(youtube_id("glvVYIhdWlU"), "glvVYIhdWlU")
 
-    def test_rejects_other_hosts_and_malformed_ports(self):
-        for url in (
+    def test_rejects_urls_and_invalid_codes(self):
+        for code in (
+            "",
+            "short",
+            "invalid.code",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "http://youtube.com/watch?v=dQw4w9WgXcQ",
             "https://youtube.com.evil.test/watch?v=dQw4w9WgXcQ",
             "https://youtube.com:invalid/watch?v=dQw4w9WgXcQ",
             "https://youtube.com/playlist?list=dQw4w9WgXcQ",
             "https://127.0.0.1/watch?v=dQw4w9WgXcQ",
         ):
-            with self.subTest(url=url), self.assertRaises(HTTPException):
-                youtube_id(url)
+            with self.subTest(code=code), self.assertRaises(HTTPException):
+                youtube_id(code)
 
 
 class WorkerTests(unittest.TestCase):
@@ -85,6 +84,18 @@ class WorkerTests(unittest.TestCase):
             with connection() as database:
                 database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
             self.assertEqual(request_preview("request", "client").path, preview)
+
+    def test_snapshot_reflects_worker_transition(self):
+        self.assertEqual(request_snapshot()[0]["status"], "pending")
+        with patch("app.worker.download_video", return_value="Minha música"), patch("app.worker.create_preview"):
+            process_next()
+        self.assertEqual(request_snapshot()[0]["status"], "ready")
+
+    def test_request_persists_youtube_code(self):
+        created = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "client")
+        with connection() as database:
+            row = database.execute("SELECT video_id FROM requests WHERE id = ?", (created["id"],)).fetchone()
+        self.assertEqual(row["video_id"], "glvVYIhdWlU")
 
 
 class PreviewTests(unittest.TestCase):
