@@ -15,6 +15,13 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - **TV durante a música:** vídeo e áudio originais ocupam a tela com barra animada e pontuação por cima. Usar fullscreen do navegador (F11), pois fullscreen nativo do player pode ocultar overlays.
 - **TV entre músicas:** prévia do próximo vídeo ocupa cerca de 50% da tela com nome, título e contagem regressiva; abaixo, três próximas prévias lado a lado, cada uma com cerca de 15% da área, nome e título. Adaptar para filas com menos de quatro pedidos.
 - **Teclado do host:** setas cima/baixo percorrem ciclicamente topo, meio e base da barra (base + baixo = topo; topo + cima = base). A barra cobre toda a largura do vídeo e fica sobre legendas existentes conforme a posição escolhida. `C` alterna cinco paletas de contraste: padrão amarelo escuro, verde para acerto e vermelho para erro, além de quatro alternativas a definir/testar em vídeos claros e escuros. Celulares não recebem esses atalhos.
+- **Nova festa na TV:** `Ctrl+N` no teclado do `app-tv` inicia imediatamente um karaokê do zero, sem preservar fila, pontuações ou identidades. A página deve interceptar o atalho para evitar a ação padrão de nova janela do navegador; testar no navegador do host, pois alguns atalhos podem ser reservados. Apenas a sessão autorizada da TV pode disparar o reset.
+
+## Reset completo da festa
+
+- O servidor executa uma única operação de reset para `Ctrl+N`: interromper reprodução/contagem de aceite, bloquear novos pedidos, cancelar ou impedir a conclusão de downloads e análises em andamento, limpar pedidos, clientes, sessões, contadores, resultados, recordes, análises e estado da festa no SQLite; apagar também **todos** os vídeos baixados, áudio extraído, prévias e caches do volume de mídia. Manter somente esquema do banco e configuração da aplicação para que a festa recomece imediatamente.
+- Invalidar todas as conexões e sessões: notificar os celulares conectados, encerrar WebSockets e fazê-los apagar `client_id` e segredo de sessão armazenados localmente e retornar à tela de nome. Celulares offline devem receber sessão inválida ao voltar, apagar a identidade local e registrar novo `client_id`; nenhum ID antigo pode autorizar ações depois do reset. A TV volta ao estado inicial sem música.
+- Tornar o reset serializado e idempotente, persistindo uma nova geração da festa para impedir que trabalhos antigos ou mensagens atrasadas recriem dados/arquivos após a limpeza. Não usar `docker compose down -v` para esse atalho: o reset ocorre com os containers ativos e preserva os volumes para o próximo uso.
 
 ## Fila e aceite
 
@@ -67,6 +74,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [ ] Implementar download de links do YouTube permitidos, estados de preparo e prévias.
 - [ ] Implementar fila justa, quatro posições protegidas, três perdas, aceite e WebSocket.
 - [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
+- [ ] Implementar `Ctrl+N` somente no `app-tv` com reset integral no servidor, limpeza da mídia e invalidação/desconexão de todos os clientes.
+- [ ] Testar reset durante vídeo, aceite e download, com cliente conectado e offline, e repetição do atalho sem ressuscitar dados antigos.
 - [ ] Testar reinício, reconexão e múltiplos celulares.
 
 ### 2. Sincronismo e placar
