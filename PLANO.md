@@ -43,9 +43,9 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Arquitetura inicial proposta
 
-- **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Frontend web responsivo em TypeScript (framework a decidir após protótipo). Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
+- **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Se as interfaces forem separadas em projetos de frontend TypeScript, seus nomes serão **`app-cantor`** (celular) e **`app-tv`** (host/TV); compartilharão API e WebSocket, sem criar dois backends nem dois projetos Docker Compose. Framework a decidir após protótipo. Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
 - **SQLite** em volume Docker nomeado, modo WAL, para fila, clientes, análises e recordes; volume separado para mídia. Primeiro MVP: tarefas persistidas no banco, reivindicadas transacionalmente por um worker. Redis ou outro broker só se medições exigirem. Sem múltiplas réplicas de app até coordenar relógios/fila.
-- Compose `name: karaoke` já configura o serviço `app`, volumes persistentes separados (`db_data` e `media_data`) e porta `${KARAOKE_PORT:-8000}`. O Docker Desktop agrupa os containers sob `karaoke`, independentemente de `saope`; não criar pasta dentro desse outro projeto nem tocar nos seus containers. Adicionar o `worker` quando houver processamento a executar. Expor apenas o app para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
+- Compose `name: karaoke` já configura o serviço backend provisoriamente chamado `app`, volumes persistentes separados (`db_data` e `media_data`) e porta `${KARAOKE_PORT:-8000}`. O Docker Desktop agrupa os containers sob `karaoke`, independentemente de `saope`; os nomes `app-cantor` e `app-tv` identificam as interfaces, não projetos Compose adicionais. Não criar pasta dentro de `saope` nem tocar nos seus containers. Adicionar o `worker` quando houver processamento a executar. Expor apenas o backend para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
 - **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). HTTP serve ao MVP de fila/TV; para microfone, planejar hostname/certificado confiável instalado nos aparelhos ou solução equivalente, com `wss`. Certificado autoassinado sem confiança instalada não resolve. Testar permissão, autoplay e suspensão da aba.
 - Validar URL/origem e tamanho dos uploads, escapar títulos, limitar pedidos e negar acesso do servidor a endereços arbitrários internos. Celulares não controlam a TV.
 
@@ -63,10 +63,10 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - [x] Criar projeto Compose `karaoke`, serviço web mínimo, volumes e validar subida no Docker Desktop (`GET /health`).
 - [ ] Implementar banco SQLite, worker de download/análise e testar acesso real pela LAN.
-- [ ] Implementar entrada por nome, sessão e interface mobile compacta.
+- [ ] Implementar `app-cantor`: entrada por nome, sessão e interface mobile compacta.
 - [ ] Implementar download de links do YouTube permitidos, estados de preparo e prévias.
 - [ ] Implementar fila justa, quatro posições protegidas, três perdas, aceite e WebSocket.
-- [ ] Implementar interface da TV, reprodução, intervalo e atalhos de barra/cores.
+- [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
 - [ ] Testar reinício, reconexão e múltiplos celulares.
 
 ### 2. Sincronismo e placar
