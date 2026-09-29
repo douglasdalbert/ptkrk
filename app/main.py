@@ -112,7 +112,7 @@ def request_snapshot() -> list[dict]:
                  ready_queue.position AS position
                              FROM requests JOIN singers ON singers.id = requests.singer_id
              LEFT JOIN ready_queue ON ready_queue.request_id = requests.id
-             WHERE requests.status NOT IN ('removed', 'skipped')
+             WHERE requests.status NOT IN ('removed', 'skipped', 'played')
                  ORDER BY CASE WHEN ready_queue.position IS NOT NULL
                      THEN 0 ELSE 1 END,
                    ready_queue.position, requests.created_at, requests.rowid"""

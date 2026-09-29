@@ -76,6 +76,7 @@ class InvitationTests(unittest.TestCase):
             self.assertFalse(finish_song(database, "A1", 151))
             self.assertEqual(self.order(database), ["B1", "C1", "A2"])
             self.assertEqual(invitation_state(database)["request_id"], "B1")
+            self.assertNotIn("A1", [item["id"] for item in party_snapshot()["items"]])
             self.assertEqual(database.execute("SELECT status FROM requests WHERE id='A1'").fetchone()[0], "played")
 
     def test_only_owner_can_accept_once_without_auto_deadline(self):
