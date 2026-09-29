@@ -6,7 +6,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app.invitations import accept_invitation, expire_invitation, invitation_state, start_invitation
-from app.main import accept_request, party_snapshot
+from app.main import accept_request, party_snapshot, remove_request
 from app.queue import enqueue_ready
 from app.storage import connection, initialize
 
@@ -91,6 +91,18 @@ class InvitationTests(unittest.TestCase):
             with self.assertRaises(HTTPException):
                 accept_request("A1", "A")
         self.assertTrue(party_snapshot()["invitation"]["accepted"])
+        with self.assertRaises(HTTPException) as already_accepted:
+            remove_request("A1", "A")
+        self.assertEqual(already_accepted.exception.status_code, 409)
+
+    def test_removing_active_unaccepted_request_invites_next(self):
+        with connection() as database:
+            start_invitation(database, 100)
+        with patch("app.main.time.time", return_value=105):
+            remove_request("A1", "A")
+        self.assertEqual(party_snapshot()["invitation"]["request_id"], "B1")
+        self.assertEqual(party_snapshot()["invitation"]["deadline_ms"], 125000)
+        self.assertEqual([row["position"] for row in party_snapshot()["items"]], [1, 2, 3])
 
 
 if __name__ == "__main__":

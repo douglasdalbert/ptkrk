@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.main import NewRequest, create_request, request_preview, request_snapshot, youtube_id
+from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
 from app.media import create_preview
 from app.storage import connection, initialize
 from app.worker import process_next
@@ -96,6 +96,20 @@ class WorkerTests(unittest.TestCase):
         with connection() as database:
             row = database.execute("SELECT video_id FROM requests WHERE id = ?", (created["id"],)).fetchone()
         self.assertEqual(row["video_id"], "glvVYIhdWlU")
+
+    def test_removal_during_download_cannot_restore_request(self):
+        def cancel_during_download(video_id):
+            remove_request("request", "client")
+            return "Vídeo terminado"
+
+        with patch("app.worker.download_video", side_effect=cancel_during_download), patch("app.worker.create_preview"):
+            self.assertTrue(process_next())
+        with connection() as database:
+            status = database.execute("SELECT status FROM requests WHERE id = 'request'").fetchone()["status"]
+            queued = database.execute("SELECT COUNT(*) FROM ready_queue").fetchone()[0]
+        self.assertEqual(status, "removed")
+        self.assertEqual(queued, 0)
+        self.assertEqual(request_snapshot(), [])
 
 
 class PreviewTests(unittest.TestCase):

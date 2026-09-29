@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.invitations import accept_invitation, expire_invitation, invitation_state
+from app.invitations import accept_invitation, expire_invitation, invitation_state, start_invitation
 from app.media import MEDIA_ROOT
 from app.storage import connection, initialize
 
@@ -77,6 +77,7 @@ def request_snapshot() -> list[dict]:
                  ready_queue.position AS position
                FROM requests JOIN clients ON clients.id = requests.client_id
              LEFT JOIN ready_queue ON ready_queue.request_id = requests.id
+             WHERE requests.status != 'removed'
              ORDER BY CASE WHEN requests.status = 'ready' AND ready_queue.position IS NOT NULL
                      THEN 0 ELSE 1 END,
                    ready_queue.position, requests.created_at, requests.rowid"""
@@ -105,7 +106,7 @@ async def watch_requests() -> None:
             previous = current
             for subscriber in tuple(subscribers):
                 try:
-                    await subscriber.send_json({"type": "requests", "items": current})
+                    await subscriber.send_json(current)
                 except (WebSocketDisconnect, RuntimeError, OSError):
                     subscribers.discard(subscriber)
 
@@ -181,6 +182,30 @@ def accept_request(request_id: str, client_id: str = Depends(authenticated_clien
         if not accept_invitation(database, request_id, client_id, now):
             raise HTTPException(409, "Convite indisponível, vencido ou de outra pessoa")
     return {"status": "accepted"}
+
+
+@app.delete("/api/requests/{request_id}", status_code=204)
+def remove_request(request_id: str, client_id: str = Depends(authenticated_client)) -> None:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        request = database.execute(
+            "SELECT status FROM requests WHERE id = ? AND client_id = ?", (request_id, client_id)
+        ).fetchone()
+        if request is None or request["status"] == "removed":
+            raise HTTPException(404, "Pedido não encontrado")
+        invite = invitation_state(database)
+        if request["status"] not in ("pending", "processing", "ready", "failed") or (
+            invite and invite["request_id"] == request_id and invite["accepted"]
+        ):
+            raise HTTPException(409, "Não é possível remover uma música já aceita")
+        database.execute("UPDATE requests SET status = 'removed' WHERE id = ?", (request_id,))
+        database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
+        rows = database.execute("SELECT request_id FROM ready_queue ORDER BY position").fetchall()
+        for position, row in enumerate(rows, start=1):
+            database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row["request_id"]))
+        if invite and invite["request_id"] == request_id:
+            database.execute("DELETE FROM invitation WHERE id = 1")
+            start_invitation(database, time.time())
 
 
 @app.get("/api/requests/{request_id}/preview")

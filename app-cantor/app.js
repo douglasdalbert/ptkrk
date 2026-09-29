@@ -1,3 +1,5 @@
+import { ConfirmDialog } from "./confirm-dialog.js";
+
 const storageKey = "karaoke.singer";
 const entry = document.querySelector("#entry");
 const sessionView = document.querySelector("#session");
@@ -8,6 +10,7 @@ const requestList = document.querySelector("#request-list");
 const previewCache = new Map();
 const invitationView = document.querySelector("#invitation");
 const acceptButton = document.querySelector("#accept-button");
+const confirmDialog = new ConfirmDialog();
 let singer = null;
 let socket = null;
 let reconnectTimer = null;
@@ -81,6 +84,7 @@ async function api(path, options = {}) {
     clearSession();
     throw new Error("Sessão encerrada. Entre novamente.");
   }
+  if (response.status === 204) return null;
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(typeof payload.detail === "string" ? payload.detail : "Não foi possível concluir a operação.");
@@ -103,8 +107,8 @@ function connect() {
     if (message.type === "requests") {
       reconnectDelay = 1000;
       connectionState("Ao vivo", true);
-      renderRequests(message.items);
       renderInvitation(message.invitation, message.items);
+      renderRequests(message.items);
     }
   });
   current.addEventListener("close", (event) => {
@@ -169,6 +173,33 @@ function renderRequests(items) {
       ? `#${item.position} · Pronto`
       : (statuses[item.status] || item.status);
     row.append(placeholder, details, status);
+    if (singer && item.client_id === singer.client_id &&
+        !(currentInvitation?.request_id === item.id && currentInvitation.accepted)) {
+      const remove = document.createElement("button");
+      remove.className = "remove-button";
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.title = "Remover música";
+      remove.setAttribute("aria-label", `Remover ${title.textContent}`);
+      remove.addEventListener("click", async () => {
+        const cached = previewCache.get(item.video_id);
+        const preview = cached?.task?.then(() => cached.url);
+        const confirmed = await confirmDialog.open({
+          title: "Remover música?",
+          message: `Quer remover "${title.textContent}"?`,
+          preview,
+        });
+        if (!confirmed) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/requests/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        } catch (problem) {
+          document.querySelector("#request-message").textContent = problem.message;
+          remove.disabled = false;
+        }
+      });
+      row.append(remove);
+    }
     content.append(row);
   }
   requestList.replaceChildren(content);

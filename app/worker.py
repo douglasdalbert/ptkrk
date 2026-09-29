@@ -26,17 +26,18 @@ def process_next() -> bool:
         logger.exception("Falha ao preparar vídeo %s", item["video_id"])
         with connection() as database:
             database.execute(
-                "UPDATE requests SET status = 'failed', error = ? WHERE id = ?",
+                "UPDATE requests SET status = 'failed', error = ? WHERE id = ? AND status = 'processing'",
                 ("Não foi possível baixar/preparar este vídeo", item["id"]),
             )
     else:
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
-            database.execute(
-                "UPDATE requests SET status = 'ready', title = ? WHERE id = ?",
+            updated = database.execute(
+                "UPDATE requests SET status = 'ready', title = ? WHERE id = ? AND status = 'processing'",
                 (title, item["id"]),
             )
-            enqueue_ready(database, item["id"])
+            if updated.rowcount:
+                enqueue_ready(database, item["id"])
     return True
 
 

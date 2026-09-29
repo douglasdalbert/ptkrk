@@ -3,7 +3,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.main import request_snapshot
+from fastapi import HTTPException
+
+from app.main import remove_request, request_snapshot
 from app.queue import enqueue_ready
 from app.storage import connection, initialize
 
@@ -83,6 +85,28 @@ class QueueTests(unittest.TestCase):
         initialize()
         initialize()
         self.assertEqual([(row["id"], row["position"]) for row in request_snapshot()], [("A1", 1)])
+
+    def test_owner_removes_ready_and_positions_compact(self):
+        for request_id in ("A1", "B1", "A2"):
+            self.add_ready(request_id)
+        with self.assertRaises(HTTPException) as wrong_owner:
+            remove_request("A1", "B")
+        self.assertEqual(wrong_owner.exception.status_code, 404)
+        remove_request("B1", "B")
+        self.assertEqual([(row["id"], row["position"]) for row in request_snapshot()],
+                         [("A1", 1), ("A2", 2)])
+        with self.assertRaises(HTTPException) as repeated:
+            remove_request("B1", "B")
+        self.assertEqual(repeated.exception.status_code, 404)
+
+    def test_owner_can_remove_failed_request(self):
+        with connection() as database:
+            database.execute(
+                "INSERT INTO requests(id, client_id, video_id, status) "
+                "VALUES ('A1', 'A', 'glvVYIhdWlU', 'failed')"
+            )
+        remove_request("A1", "A")
+        self.assertEqual(request_snapshot(), [])
 
 
 if __name__ == "__main__":

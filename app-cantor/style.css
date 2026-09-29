@@ -74,4 +74,14 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .status { align-self: start; flex: none; color: var(--cyan); font-size: 10px; font-weight: 800; }
 .status.ready { color: var(--lime); }
 .status.failed { color: var(--pink); }
+.remove-button { align-self: center; flex: none; width: 32px; height: 36px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 26px; line-height: 1; }
+.remove-button:hover, .remove-button:focus-visible { color: var(--pink); background: #fa5a9c1a; }
+.confirm-dialog { width: min(420px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 22px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); box-shadow: 0 16px 70px #000b; }
+.confirm-dialog::backdrop { background: #050607bd; }
+.confirm-dialog h2 { margin: 0 0 16px; font-size: 19px; }
+.confirm-dialog img { display: block; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 3px; }
+.confirm-dialog img[hidden] { display: none; }
+.confirm-dialog p { margin: 16px 0 24px; font-size: 14px; overflow-wrap: anywhere; }
+.confirm-actions { display: flex; justify-content: flex-end; align-items: center; gap: 20px; }
+.danger { min-height: 42px; padding: 0 14px; border: 0; border-radius: 4px; background: var(--pink); color: #19080e; font-size: 13px; font-weight: 800; }
 @media (max-width: 390px) { .shell { padding-inline: 16px; } .wordmark-sub { display: none; } .request-row .primary { padding-inline: 14px; } .request-row .primary span { display: none; } .status { font-size: 9px; } }
