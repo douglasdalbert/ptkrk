@@ -11,23 +11,38 @@
 <body>
   <main id="stage">
     <section id="show">
-      <video id="video" playsinline preload="metadata"></video>
-      <div id="video-overlay" hidden>
-        <div class="track" id="track"><span>♫</span></div>
-        <button id="play" type="button" hidden>Reproduzir</button>
-      </div>
-      <div id="intermission">
-        <div class="heading"><span>AO VIVO / KARAOKÊ</span><span id="connect-status">Conectando</span></div>
-        <div class="feature">
-          <img id="next-preview" alt="" hidden>
-          <div class="feature-shade"></div>
-          <div class="feature-text"><p id="next-status">AGUARDANDO MÚSICAS</p><h1 id="next-title">A festa começa aqui.</h1><p id="next-singer"></p></div>
+      <div class="screen">
+        <video id="video" playsinline preload="metadata"></video>
+        <div id="video-overlay" hidden>
+          <div class="track" id="track"><span>♫</span></div>
+          <button id="play" type="button" hidden>Reproduzir</button>
         </div>
-        <div class="upcoming" id="upcoming"></div>
+        <div id="intermission">
+          <div class="feature">
+            <img id="next-preview" alt="" hidden>
+            <div class="feature-shade"></div>
+            <div class="feature-text"><p id="next-status">AGUARDANDO MÚSICAS</p><h1 id="next-title">A festa começa aqui.</h1><p id="next-singer"></p></div>
+          </div>
+        </div>
+        <span id="connect-status" class="connect-status" role="status">Conectando</span>
+        <div id="skip-notice" class="skip-notice" hidden>Pulando música <span id="skip-clock"></span></div>
+        <div id="error" class="error" role="alert"></div>
       </div>
-      <aside class="join" id="join"><img id="qr" alt="QR para entrar na festa" hidden><div><strong>ENTRE NA FESTA</strong><span id="join-url">Conectando ao Wi-Fi</span></div></aside>
-      <div id="skip-notice" class="skip-notice" hidden>Pulando música <span id="skip-clock"></span></div>
-      <div id="error" class="error" role="status"></div>
+      <footer class="tv-footer">
+        <section class="queue" aria-labelledby="queue-title">
+          <h2 id="queue-title">Próximas músicas</h2>
+          <div class="upcoming" id="upcoming"></div>
+        </section>
+        <section class="actions" aria-label="Ações da TV">
+          <button id="color-action" type="button" title="Alternar as cores das barras (C)">Alterne as cores das barras <kbd>C</kbd></button>
+          <button id="reset-action" type="button" title="Iniciar nova festa (Ctrl+Alt+N)">Nova festa <kbd>Ctrl+Alt+N</kbd></button>
+        </section>
+        <aside class="join" id="join">
+          <h2>Entre na festa</h2>
+          <img id="qr" alt="QR para entrar na festa" hidden>
+          <span id="join-url">Conectando ao Wi-Fi</span>
+        </aside>
+      </footer>
     </section>
   </main>
 </body>

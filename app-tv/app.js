@@ -1,3 +1,5 @@
+import { ConfirmDialog } from "/cantor/assets/confirm-dialog.js";
+
 const show = document.querySelector("#show");
 const video = document.querySelector("#video");
 const overlay = document.querySelector("#video-overlay");
@@ -12,6 +14,7 @@ let barPosition = 1;
 let colorIndex = 0;
 let party = null;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
+const confirmDialog = new ConfirmDialog();
 
 async function command(path, options = {}) {
   const response = await fetch(path, {
@@ -57,7 +60,7 @@ function render(snapshot) {
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
   const next = current || items.slice(0, 4).find(item => item.status === "ready");
-  const others = items.filter(item => item.id !== next?.id).slice(0, 3);
+  const others = items.filter(item => activeId ? item.id !== activeId : true).slice(0, 4);
   const skipped = snapshot.skip;
   skip = skipped;
   document.querySelector("#skip-notice").hidden = !skipped;
@@ -158,21 +161,40 @@ document.addEventListener("keydown", event => {
   if (show.hidden || event.target instanceof HTMLInputElement) return;
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "n") {
     event.preventDefault();
-    command("/api/tv/reset", {method:"POST"}).then(() => {
-      stopPlayback();
-      party = null;
-      return command("/api/tv/state");
-    }).then(render).catch(problem => { error.textContent = problem.message; });
+    resetParty();
   } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     barPosition = (barPosition + (event.key === "ArrowDown" ? 1 : 2)) % 3;
     document.querySelector("#track").style.top = ["7%", "48%", "88%"][barPosition];
   } else if (event.key.toLowerCase() === "c" && !event.ctrlKey && !event.altKey) {
-    colorIndex = (colorIndex + 1) % colors.length;
-    document.querySelector("#track").style.borderColor = colors[colorIndex];
-    document.querySelector("#track").style.color = colors[colorIndex];
-    document.querySelector("#track").style.backgroundColor = `${colors[colorIndex]}55`;
+    cycleColor();
   }
 });
+
+function cycleColor() {
+  colorIndex = (colorIndex + 1) % colors.length;
+  const track = document.querySelector("#track");
+  track.style.borderColor = colors[colorIndex];
+  track.style.color = colors[colorIndex];
+  track.style.backgroundColor = `${colors[colorIndex]}55`;
+}
+
+async function resetParty() {
+  const confirmed = await confirmDialog.open({
+    title: "Iniciar nova festa?",
+    message: "Todos os cantores sairão e a fila, pontuações e vídeos baixados serão apagados.",
+    confirmLabel: "Iniciar nova festa",
+  });
+  if (!confirmed) return;
+  try {
+    await command("/api/tv/reset", {method:"POST"});
+    stopPlayback();
+    party = null;
+    render(await command("/api/tv/state"));
+  } catch (problem) { error.textContent = problem.message; }
+}
+
+document.querySelector("#color-action").addEventListener("click", cycleColor);
+document.querySelector("#reset-action").addEventListener("click", resetParty);
 
 setup().catch(problem => { error.textContent = problem.message; });
