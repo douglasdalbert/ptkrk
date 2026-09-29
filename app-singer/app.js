@@ -211,6 +211,7 @@ function connect() {
       connectionState("Conectado", "connected");
       latestItems = message.items;
       partySingers = message.singers || [];
+      renderSkip(message);
       renderInvitation(message.invitation, message.items);
       renderSingingOverlay(message.invitation, message.items);
       renderGroupList();
@@ -222,7 +223,6 @@ function connect() {
       }
       promptGroupInvite(message.invitation, message.items);
       renderRequests(message.items);
-      renderSkip(message);
       showFailedRequest(message.items);
     }
   });
@@ -437,7 +437,7 @@ function renderInvitation(invitation, items) {
   document.querySelector("#invitation-song").textContent = item.title || item.video_id;
   acceptButton.hidden = acceptedMine;
   groupButton.hidden = item.singer_id !== singer.singer_id || acceptedMine || !!currentSkip;
-  acceptButton.disabled = false;
+  acceptButton.disabled = !!currentSkip;
   const invitationMessage = document.querySelector("#invitation-message");
   clearError(invitationMessage);
   invitationMessage.textContent = lateJoin ? "Você entrou depois do início e não participa da pontuação desta música." :
