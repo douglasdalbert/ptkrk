@@ -15,13 +15,13 @@ button { cursor:pointer; }
 .login button,#play { padding:14px 22px; border:0; border-radius:3px; background:var(--lime); font-weight:bold; color:#121510; }
 .error:not(:empty) { display:flex; align-items:flex-start; gap:9px; padding:10px 12px; border-left:3px solid #ff5868; border-radius:3px; background:#ff586824; color:#ff5868; font-weight:bold; overflow-wrap:anywhere; }
 .error:not(:empty)::before { content:"\26A0\FE0E"; flex:none; font-family:"Segoe UI Symbol",sans-serif; font-size:18px; line-height:1; }
-#video { display:block; width:100%; height:100%; object-fit:contain; background:#000; }
+#video { display:block; width:100%; height:100%; object-fit:contain; object-position:center; background:#000; }
 #video-overlay { position:absolute; inset:0; pointer-events:none; }
 .track { position:absolute; left:0; right:0; top:48%; height:28px; background:#a78d2255; border-top:2px solid var(--lime); color:var(--lime); font-size:23px; transition:top .2s; }
 .track span { margin-left:2vw; }
 #play { pointer-events:auto; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:18px; }
-#intermission { position:absolute; inset:0; display:grid; place-items:center; padding:2vw; background:radial-gradient(ellipse at 8% 100%,#254c422e,transparent 60%),var(--ink); }
-.feature { position:relative; width:min(100%,calc((100dvh - 172px)*16/9)); height:100%; max-height:100%; overflow:hidden; background:#252c2d; }
+#intermission { position:absolute; inset:0; display:block; padding:0; background:radial-gradient(ellipse at 8% 100%,#254c422e,transparent 60%),var(--ink); }
+.feature { position:absolute; inset:0; width:auto; height:auto; overflow:hidden; background:#252c2d; }
 .feature img { width:100%; height:100%; object-fit:contain; }
 .feature-shade { position:absolute; inset:0; background:linear-gradient(transparent 30%,#080a0be8); }
 .feature-text { position:absolute; left:4%; right:4%; bottom:5%; }
