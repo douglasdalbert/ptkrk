@@ -18,11 +18,11 @@ class InvitationTests(unittest.TestCase):
         self.path_patch.start()
         initialize()
         with connection() as database:
-            for client_id in ("A", "B", "C"):
-                database.execute("INSERT INTO clients(id, name, session_hash) VALUES (?, ?, ?)",
-                                 (client_id, client_id, client_id))
+            for singer_id in ("A", "B", "C"):
+                database.execute("INSERT INTO singers(id, name, session_hash) VALUES (?, ?, ?)",
+                                 (singer_id, singer_id, singer_id))
             for request_id in ("A1", "B1", "C1", "A2"):
-                database.execute("INSERT INTO requests(id, client_id, video_id, status) "
+                database.execute("INSERT INTO requests(id, singer_id, video_id, status) "
                                  "VALUES (?, ?, 'glvVYIhdWlU', 'ready')", (request_id, request_id[0]))
                 enqueue_request(database, request_id)
 
@@ -64,7 +64,7 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(self.order(database), ["B1", "C1", "A2"])
             self.assertEqual(invitation_state(database)["request_id"], "B1")
             self.assertEqual(database.execute("SELECT status FROM requests WHERE id='A1'").fetchone()[0], "skipped")
-            self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE client_id='A'").fetchone()[0], 1)
+            self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE singer_id='A'").fetchone()[0], 1)
         self.assertNotIn("A1", [item["id"] for item in party_snapshot()["items"]])
 
     def test_finish_accepted_song_advances_once(self):
@@ -85,7 +85,7 @@ class InvitationTests(unittest.TestCase):
             self.assertTrue(accept_invitation(database, "A1", "A", 200))
             self.assertFalse(accept_invitation(database, "A1", "A", 200))
             self.assertTrue(invitation_state(database)["accepted"])
-            self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE client_id = 'A'").fetchone()[0], 1)
+            self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE singer_id = 'A'").fetchone()[0], 1)
 
     def test_no_invitation_is_started_without_explicit_activation(self):
         with connection() as database:
@@ -102,7 +102,7 @@ class InvitationTests(unittest.TestCase):
         with connection() as database:
             database.execute("UPDATE requests SET status = 'processing' WHERE id IN ('A1', 'B1', 'C1', 'A2')")
             database.execute(
-                "INSERT INTO requests(id, client_id, video_id, status) VALUES ('B2', 'B', 'glvVYIhdWlU', 'ready')"
+                "INSERT INTO requests(id, singer_id, video_id, status) VALUES ('B2', 'B', 'glvVYIhdWlU', 'ready')"
             )
             from app.queue import enqueue_request
             enqueue_request(database, "B2")
@@ -125,7 +125,7 @@ class InvitationTests(unittest.TestCase):
         with connection() as database:
             start_invitation(database, 100)
         self.assertEqual(party_snapshot()["invitation"]["request_id"], "A1")
-        self.assertEqual(party_snapshot()["items"][0]["client_id"], "A")
+        self.assertEqual(party_snapshot()["items"][0]["singer_id"], "A")
         with patch("app.main.time.time", return_value=110):
             with self.assertRaises(HTTPException) as not_owner:
                 accept_request("A1", "B")

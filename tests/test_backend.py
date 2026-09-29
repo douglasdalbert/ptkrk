@@ -44,12 +44,12 @@ class WorkerTests(unittest.TestCase):
         initialize()
         with connection() as database:
             database.execute(
-                "INSERT INTO clients (id, name, session_hash) VALUES (?, ?, ?)",
-                ("client", "Cantor", "session"),
+                "INSERT INTO singers (id, name, session_hash) VALUES (?, ?, ?)",
+                ("singer", "Cantor", "session"),
             )
             database.execute(
-                "INSERT INTO requests (id, client_id, video_id) VALUES (?, ?, ?)",
-                ("request", "client", "dQw4w9WgXcQ"),
+                "INSERT INTO requests (id, singer_id, video_id) VALUES (?, ?, ?)",
+                ("request", "singer", "dQw4w9WgXcQ"),
             )
             enqueue_request(database, "request")
 
@@ -80,7 +80,7 @@ class WorkerTests(unittest.TestCase):
     def test_preview_requires_ready_request(self):
         with patch("app.main.MEDIA_ROOT", Path(self.directory.name)):
             with self.assertRaises(HTTPException) as missing:
-                request_preview("request", "client")
+                request_preview("request", "singer")
             self.assertEqual(missing.exception.status_code, 404)
             with connection() as database:
                 generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
@@ -89,7 +89,7 @@ class WorkerTests(unittest.TestCase):
             preview.write_bytes(b"preview")
             with connection() as database:
                 database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
-            self.assertEqual(request_preview("request", "client").path, preview)
+            self.assertEqual(request_preview("request", "singer").path, preview)
 
     def test_snapshot_reflects_worker_transition(self):
         self.assertEqual(request_snapshot()[0]["status"], "pending")
@@ -98,7 +98,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(request_snapshot()[0]["status"], "ready")
 
     def test_request_persists_youtube_code(self):
-        created = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "client")
+        created = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "singer")
         with connection() as database:
             row = database.execute("SELECT video_id FROM requests WHERE id = ?", (created["id"],)).fetchone()
         self.assertEqual(row["video_id"], "glvVYIhdWlU")
@@ -116,7 +116,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_removal_during_download_cannot_restore_request(self):
         def cancel_during_download(video_id, generation):
-            remove_request("request", "client")
+            remove_request("request", "singer")
             return "Vídeo terminado"
 
         with patch("app.worker.download_video", side_effect=cancel_during_download), patch("app.worker.create_preview"):
@@ -134,7 +134,7 @@ class WorkerTests(unittest.TestCase):
             for index in range(2, 12):
                 request_id = f"request-{index}"
                 database.execute(
-                    "INSERT INTO requests(id, client_id, video_id, status) VALUES (?, 'client', ?, 'ready')",
+                    "INSERT INTO requests(id, singer_id, video_id, status) VALUES (?, 'singer', ?, 'ready')",
                     (request_id, "glvVYIhdWlU"),
                 )
                 enqueue_request(database, request_id)
@@ -166,11 +166,11 @@ class WorkerTests(unittest.TestCase):
             for index in range(2, 10):
                 request_id = f"A{index}"
                 database.execute(
-                    "INSERT INTO requests(id, client_id, video_id, status) VALUES (?, 'client', ?, 'ready')",
+                    "INSERT INTO requests(id, singer_id, video_id, status) VALUES (?, 'singer', ?, 'ready')",
                     (request_id, "glvVYIhdWlU"),
                 )
                 enqueue_request(database, request_id)
-            database.execute("INSERT INTO requests(id, client_id, video_id) VALUES ('A10', 'client', 'abcdefghijk')")
+            database.execute("INSERT INTO requests(id, singer_id, video_id) VALUES ('A10', 'singer', 'abcdefghijk')")
             enqueue_request(database, "A10")
 
         def download(video_id, generation):
@@ -186,9 +186,9 @@ class WorkerTests(unittest.TestCase):
                     first = executor.submit(process_next)
                     self.assertTrue(started.wait(3))
                     with connection() as database:
-                        database.execute("INSERT INTO clients(id,name,session_hash) VALUES ('C','C','C')")
+                        database.execute("INSERT INTO singers(id,name,session_hash) VALUES ('C','C','C')")
                         database.execute(
-                            "INSERT INTO requests(id, client_id, video_id) VALUES ('C1', 'C', 'lmnopqrstuv')"
+                            "INSERT INTO requests(id, singer_id, video_id) VALUES ('C1', 'C', 'lmnopqrstuv')"
                         )
                         enqueue_request(database, "C1")
                         displaced = database.execute(

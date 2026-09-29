@@ -34,8 +34,8 @@ class TvTests(unittest.TestCase):
 
     def add_ready(self):
         with connection() as database:
-            database.execute("INSERT INTO clients(id, name, session_hash) VALUES ('singer', 'Cantor', 'hash')")
-            database.execute("INSERT INTO requests(id, client_id, video_id, status) "
+            database.execute("INSERT INTO singers(id, name, session_hash) VALUES ('singer', 'Cantor', 'hash')")
+            database.execute("INSERT INTO requests(id, singer_id, video_id, status) "
                              "VALUES ('song', 'singer', 'glvVYIhdWlU', 'ready')")
             enqueue_request(database, "song")
 
@@ -77,8 +77,10 @@ class TvTests(unittest.TestCase):
         self.assertNotEqual(new, old)
         self.assertFalse(media.exists())
         self.assertEqual(self.client.get("/api/tv/state").json()["items"], [])
-        self.assertEqual(self.client.post("/api/clients", json={"name": "Old", "party": old}).status_code, 410)
-        self.assertEqual(self.client.post("/api/clients", json={"name": "New", "party": new}).status_code, 201)
+        self.assertEqual(self.client.post("/api/singers", json={"name": "Old", "party": old}).status_code, 410)
+        response = self.client.post("/api/singers", json={"name": "New", "party": new})
+        self.assertEqual(response.status_code, 201)
+        self.assertIn("singer_id", response.json())
         self.assertIn(new, self.client.get("/api/tv/join").json()["url"])
 
     def test_tv_websocket_opens_invitation_only_while_connected(self):
@@ -104,8 +106,8 @@ class TvTests(unittest.TestCase):
     def test_reset_during_download_does_not_restore_old_party(self):
         with connection() as database:
             generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
-            database.execute("INSERT INTO clients(id,name,session_hash) VALUES ('A','A','hash')")
-            database.execute("INSERT INTO requests(id,client_id,video_id) VALUES ('A1','A','glvVYIhdWlU')")
+            database.execute("INSERT INTO singers(id,name,session_hash) VALUES ('A','A','hash')")
+            database.execute("INSERT INTO requests(id,singer_id,video_id) VALUES ('A1','A','glvVYIhdWlU')")
             enqueue_request(database, "A1")
 
         def download(video_id, old_generation):

@@ -28,9 +28,15 @@ def connection():
 
 def initialize() -> None:
     with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        legacy = database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'clients'").fetchone()
+        if legacy:
+            database.execute("ALTER TABLE clients RENAME TO singers")
+            database.execute("ALTER TABLE requests RENAME COLUMN client_id TO singer_id")
+            database.execute("ALTER TABLE accepted_counts RENAME COLUMN client_id TO singer_id")
         database.executescript(
             """
-            CREATE TABLE IF NOT EXISTS clients (
+            CREATE TABLE IF NOT EXISTS singers (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 session_hash TEXT NOT NULL UNIQUE,
@@ -38,7 +44,7 @@ def initialize() -> None:
             );
             CREATE TABLE IF NOT EXISTS requests (
                 id TEXT PRIMARY KEY,
-                client_id TEXT NOT NULL REFERENCES clients(id),
+                singer_id TEXT NOT NULL REFERENCES singers(id),
                 video_id TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 title TEXT,
@@ -51,7 +57,7 @@ def initialize() -> None:
                 position INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS accepted_counts (
-                client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+                singer_id TEXT PRIMARY KEY REFERENCES singers(id) ON DELETE CASCADE,
                 total INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS invitation (

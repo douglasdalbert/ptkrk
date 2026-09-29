@@ -49,7 +49,7 @@ tv_subscribers: set[WebSocket] = set()
 singer_subscribers: dict[WebSocket, str] = {}
 
 
-class NewClient(BaseModel):
+class NewSinger(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     party: str
 
@@ -76,29 +76,29 @@ def youtube_id(code: str) -> str:
     return code
 
 
-def client_for_token(token: str) -> str | None:
+def singer_for_token(token: str) -> str | None:
     session_hash = hashlib.sha256(token.encode()).hexdigest()
     with connection() as database:
-        client = database.execute("SELECT id FROM clients WHERE session_hash = ?", (session_hash,)).fetchone()
-    return client["id"] if client else None
+        singer = database.execute("SELECT id FROM singers WHERE session_hash = ?", (session_hash,)).fetchone()
+    return singer["id"] if singer else None
 
 
-def authenticated_client(authorization: str = Header(default="")) -> str:
+def authenticated_singer(authorization: str = Header(default="")) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Sessão necessária")
-    client_id = client_for_token(authorization[7:])
-    if client_id is None:
+    singer_id = singer_for_token(authorization[7:])
+    if singer_id is None:
         raise HTTPException(401, "Sessão inválida")
-    return client_id
+    return singer_id
 
 
 def request_snapshot() -> list[dict]:
     with connection() as database:
         rows = database.execute(
-            """SELECT requests.id, requests.client_id, requests.video_id, requests.status, requests.title,
-                 requests.error, requests.created_at, clients.name AS client_name,
+                        """SELECT requests.id, requests.singer_id, requests.video_id, requests.status, requests.title,
+                                 requests.error, requests.created_at, singers.name AS singer_name,
                  ready_queue.position AS position
-               FROM requests JOIN clients ON clients.id = requests.client_id
+                             FROM requests JOIN singers ON singers.id = requests.singer_id
              LEFT JOIN ready_queue ON ready_queue.request_id = requests.id
              WHERE requests.status NOT IN ('removed', 'skipped')
                  ORDER BY CASE WHEN ready_queue.position IS NOT NULL
@@ -159,7 +159,7 @@ async def requests_socket(websocket: WebSocket) -> None:
         if is_tv and websocket.headers.get("origin") != f"http://{websocket.headers.get('host')}":
             await websocket.close(code=1008)
             return
-        if not is_tv and (not isinstance(token, str) or client_for_token(token) is None):
+        if not is_tv and (not isinstance(token, str) or singer_for_token(token) is None):
             await websocket.close(code=1008)
             return
         if is_tv:
@@ -211,7 +211,7 @@ def tv_reset() -> dict[str, str]:
         generation = str(uuid4())
         database.execute("UPDATE party SET generation=? WHERE id=1", (generation,))
         for table in ("skip_request", "invitation", "missed_invitations", "ready_queue",
-                      "accepted_counts", "requests", "clients"):
+                      "accepted_counts", "requests", "singers"):
             database.execute(f"DELETE FROM {table}")
     shutil.rmtree(MEDIA_ROOT / previous, ignore_errors=True)
     for directory in (MEDIA_ROOT / "videos", MEDIA_ROOT / "previews"):
@@ -277,12 +277,12 @@ def tv_qr(request: Request) -> StreamingResponse:
     return StreamingResponse(output, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
-@app.post("/api/clients", status_code=201)
-def create_client(payload: NewClient) -> dict[str, str]:
+@app.post("/api/singers", status_code=201)
+def create_singer(payload: NewSinger) -> dict[str, str]:
     name = payload.name.strip()
     if not name:
         raise HTTPException(422, "Informe seu nome")
-    client_id = str(uuid4())
+    singer_id = str(uuid4())
     token = secrets.token_urlsafe(32)
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
@@ -290,43 +290,43 @@ def create_client(payload: NewClient) -> dict[str, str]:
         if payload.party != generation:
             raise HTTPException(410, "Festa encerrada. Leia o novo QR na TV")
         database.execute(
-            "INSERT INTO clients (id, name, session_hash) VALUES (?, ?, ?)",
-            (client_id, name, hashlib.sha256(token.encode()).hexdigest()),
+            "INSERT INTO singers (id, name, session_hash) VALUES (?, ?, ?)",
+            (singer_id, name, hashlib.sha256(token.encode()).hexdigest()),
         )
-    return {"client_id": client_id, "name": name, "token": token}
+    return {"singer_id": singer_id, "name": name, "token": token}
 
 
 @app.post("/api/requests", status_code=201)
-def create_request(payload: NewRequest, client_id: str = Depends(authenticated_client)) -> dict[str, str]:
+def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_singer)) -> dict[str, str]:
     video_id = youtube_id(payload.youtubeCode)
     request_id = str(uuid4())
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         database.execute(
-            "INSERT INTO requests (id, client_id, video_id) VALUES (?, ?, ?)",
-            (request_id, client_id, video_id),
+            "INSERT INTO requests (id, singer_id, video_id) VALUES (?, ?, ?)",
+            (request_id, singer_id, video_id),
         )
         enqueue_request(database, request_id)
     return {"id": request_id, "status": "pending", "video_id": video_id}
 
 
 @app.get("/api/requests")
-def list_requests(client_id: str = Depends(authenticated_client)) -> list[dict]:
+def list_requests(singer_id: str = Depends(authenticated_singer)) -> list[dict]:
     return request_snapshot()
 
 
 @app.post("/api/requests/{request_id}/accept")
-def accept_request(request_id: str, client_id: str = Depends(authenticated_client)) -> dict[str, str]:
+def accept_request(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict[str, str]:
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         now = time.time()
-        if not accept_invitation(database, request_id, client_id, now):
+        if not accept_invitation(database, request_id, singer_id, now):
             raise HTTPException(409, "Convite indisponível ou de outra pessoa")
     return {"status": "accepted"}
 
 
 @app.post("/api/requests/{request_id}/skip", status_code=202)
-def skip_request(request_id: str, client_id: str = Depends(authenticated_client)) -> dict:
+def skip_request(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict:
     if not skip_enabled():
         raise HTTPException(403, "Pular música está desativado")
     with connection() as database:
@@ -338,11 +338,11 @@ def skip_request(request_id: str, client_id: str = Depends(authenticated_client)
 
 
 @app.delete("/api/requests/{request_id}", status_code=204)
-def remove_request(request_id: str, client_id: str = Depends(authenticated_client)) -> None:
+def remove_request(request_id: str, singer_id: str = Depends(authenticated_singer)) -> None:
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         request = database.execute(
-            "SELECT status FROM requests WHERE id = ? AND client_id = ?", (request_id, client_id)
+            "SELECT status FROM requests WHERE id = ? AND singer_id = ?", (request_id, singer_id)
         ).fetchone()
         if request is None or request["status"] == "removed":
             raise HTTPException(404, "Pedido não encontrado")
@@ -363,7 +363,7 @@ def remove_request(request_id: str, client_id: str = Depends(authenticated_clien
 
 
 @app.get("/api/requests/{request_id}/preview")
-def request_preview(request_id: str, client_id: str = Depends(authenticated_client)) -> FileResponse:
+def request_preview(request_id: str, singer_id: str = Depends(authenticated_singer)) -> FileResponse:
     with connection() as database:
         request = database.execute(
             "SELECT video_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)

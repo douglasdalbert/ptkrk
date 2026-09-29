@@ -17,10 +17,10 @@ class QueueTests(unittest.TestCase):
         self.path_patch.start()
         initialize()
         with connection() as database:
-            for client in ("A", "B", "C"):
+            for singer in ("A", "B", "C"):
                 database.execute(
-                    "INSERT INTO clients(id, name, session_hash) VALUES (?, ?, ?)",
-                    (client, client, client),
+                    "INSERT INTO singers(id, name, session_hash) VALUES (?, ?, ?)",
+                    (singer, singer, singer),
                 )
 
     def tearDown(self):
@@ -31,7 +31,7 @@ class QueueTests(unittest.TestCase):
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             database.execute(
-                "INSERT INTO requests(id, client_id, video_id, status) VALUES (?, ?, ?, 'ready')",
+                "INSERT INTO requests(id, singer_id, video_id, status) VALUES (?, ?, ?, 'ready')",
                 (request_id, request_id[0], "glvVYIhdWlU"),
             )
             enqueue_request(database, request_id)
@@ -63,7 +63,7 @@ class QueueTests(unittest.TestCase):
         for request_id in ("A1", "B1", "A2", "B2", "A3"):
             self.add_ready(request_id)
         with connection() as database:
-            database.execute("INSERT INTO accepted_counts(client_id, total) VALUES ('A', 5)")
+            database.execute("INSERT INTO accepted_counts(singer_id, total) VALUES ('A', 5)")
         self.add_ready("B3")
         self.assertEqual(self.order()[4:], ["B3", "A3"])
 
@@ -71,7 +71,7 @@ class QueueTests(unittest.TestCase):
         self.add_ready("A1")
         with connection() as database:
             database.execute(
-                "INSERT INTO requests(id, client_id, video_id) VALUES ('B1', 'B', 'glvVYIhdWlU')"
+                "INSERT INTO requests(id, singer_id, video_id) VALUES ('B1', 'B', 'glvVYIhdWlU')"
             )
         snapshot = request_snapshot()
         self.assertEqual([(row["id"], row["position"]) for row in snapshot], [("A1", 1), ("B1", None)])
@@ -79,7 +79,7 @@ class QueueTests(unittest.TestCase):
     def test_initialize_positions_existing_ready_requests(self):
         with connection() as database:
             database.execute(
-                "INSERT INTO requests(id, client_id, video_id, status) "
+                "INSERT INTO requests(id, singer_id, video_id, status) "
                 "VALUES ('A1', 'A', 'glvVYIhdWlU', 'ready')"
             )
         initialize()
@@ -102,7 +102,7 @@ class QueueTests(unittest.TestCase):
     def test_owner_can_remove_failed_request(self):
         with connection() as database:
             database.execute(
-                "INSERT INTO requests(id, client_id, video_id, status) "
+                "INSERT INTO requests(id, singer_id, video_id, status) "
                 "VALUES ('A1', 'A', 'glvVYIhdWlU', 'failed')"
             )
         remove_request("A1", "A")

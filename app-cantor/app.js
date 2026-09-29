@@ -74,6 +74,11 @@ function clearSession() {
 }
 
 function showSession(identity) {
+  if (!identity.singer_id && identity.client_id) {
+    identity.singer_id = identity.client_id;
+    delete identity.client_id;
+    localStorage.setItem(storageKey, JSON.stringify(identity));
+  }
   if (!party || identity.party !== party) {
     clearSession();
     return;
@@ -186,7 +191,7 @@ function renderRequests(items) {
     const title = document.createElement("strong");
     title.textContent = item.title || `youtube.com/watch?v=${item.video_id}`;
     const singerName = document.createElement("small");
-    singerName.textContent = item.client_name;
+    singerName.textContent = item.singer_name;
     details.append(title, singerName);
     const status = document.createElement("span");
     status.className = `status ${item.status}`;
@@ -204,7 +209,7 @@ function renderRequests(items) {
       status.prepend(position);
     }
     row.append(placeholder, details, status);
-    if (singer && item.client_id === singer.client_id &&
+    if (singer && item.singer_id === singer.singer_id &&
         !(currentInvitation?.request_id === item.id && currentInvitation.accepted)) {
       const remove = document.createElement("button");
       remove.className = "remove-button";
@@ -237,7 +242,7 @@ function renderRequests(items) {
 }
 
 function renderInvitation(invitation, items) {
-  if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id && item.client_id === singer.client_id)) {
+  if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id && item.singer_id === singer.singer_id)) {
     currentInvitation = null;
     invitationView.hidden = true;
     return;
@@ -311,7 +316,7 @@ entryForm.addEventListener("submit", async (event) => {
   error.hidden = true;
   try {
     if (!party) throw new Error("Leia o QR da festa na TV para entrar.");
-    const identity = await api("/api/clients", {
+    const identity = await api("/api/singers", {
       method: "POST",
       body: JSON.stringify({ name: entryForm.elements.name.value.trim(), party }),
     });

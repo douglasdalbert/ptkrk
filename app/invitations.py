@@ -79,20 +79,20 @@ def apply_skip(database: sqlite3.Connection, now: float) -> dict | None:
     return None
 
 
-def accept_invitation(database: sqlite3.Connection, request_id: str, client_id: str, now: float) -> bool:
+def accept_invitation(database: sqlite3.Connection, request_id: str, singer_id: str, now: float) -> bool:
     current = invitation_state(database)
     if current is None or current["request_id"] != request_id or current["accepted"]:
         return False
     if skip_state(database):
         return False
-    owner = database.execute("SELECT client_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
-    if owner is None or owner["client_id"] != client_id or owner["status"] != "ready":
+    owner = database.execute("SELECT singer_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
+    if owner is None or owner["singer_id"] != singer_id or owner["status"] != "ready":
         return False
     database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
     database.execute(
-        """INSERT INTO accepted_counts(client_id, total) VALUES (?, 1)
-           ON CONFLICT(client_id) DO UPDATE SET total = total + 1""",
-        (client_id,),
+          """INSERT INTO accepted_counts(singer_id, total) VALUES (?, 1)
+              ON CONFLICT(singer_id) DO UPDATE SET total = total + 1""",
+          (singer_id,),
     )
     return True
 
