@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -63,12 +64,17 @@ class TvTests(unittest.TestCase):
         self.assertIsNone(self.client.get("/api/tv/state").json()["invitation"])
         self.assertEqual(self.client.get("/api/tv/song/video").status_code, 404)
 
-    def test_reset_rotates_qr_and_invalidates_sessions_and_media(self):
+    def test_reset_keeps_join_url_but_invalidates_sessions_and_media(self):
         self.add_ready()
         old = self.client.get("/api/tv/state").json()["party"]
         self.assertEqual(self.client.get("/api/tv/join").json()["url"],
-                         f"http://192.168.68.108:8000/cantor?party={old}")
-        self.assertTrue(self.client.get("/api/tv/qr").content.startswith(b"\x89PNG"))
+                         "http://192.168.68.108:8000/cantor")
+        old_qr = self.client.get("/api/tv/qr").content
+        self.assertTrue(old_qr.startswith(b"\x89PNG"))
+        previous_singer = self.client.post("/api/singers", json={"name": "Old"})
+        self.assertEqual(previous_singer.status_code, 201)
+        self.assertEqual(previous_singer.json()["party"], old)
+        old_token = previous_singer.json()["token"]
         media = Path(self.directory.name) / old / "videos" / "glvVYIhdWlU.mp4"
         media.parent.mkdir(parents=True)
         media.write_bytes(b"old")
@@ -77,11 +83,19 @@ class TvTests(unittest.TestCase):
         self.assertNotEqual(new, old)
         self.assertFalse(media.exists())
         self.assertEqual(self.client.get("/api/tv/state").json()["items"], [])
-        self.assertEqual(self.client.post("/api/singers", json={"name": "Old", "party": old}).status_code, 410)
-        response = self.client.post("/api/singers", json={"name": "New", "party": new})
+        expired = self.client.get("/api/requests", headers={"Authorization": f"Bearer {old_token}"})
+        self.assertEqual(expired.status_code, 401)
+        self.assertEqual(expired.headers["X-Karaoke-Party"], new)
+        response = self.client.post("/api/singers", json={"name": "New"})
         self.assertEqual(response.status_code, 201)
         self.assertIn("singer_id", response.json())
-        self.assertIn(new, self.client.get("/api/tv/join").json()["url"])
+        self.assertEqual(response.json()["party"], new)
+        self.assertEqual(response.headers["X-Karaoke-Party"], new)
+        self.assertEqual(self.client.get("/api/requests", headers={
+            "Authorization": f"Bearer {response.json()['token']}"
+        }).headers["X-Karaoke-Party"], new)
+        self.assertEqual(self.client.get("/api/tv/join").json()["url"], "http://192.168.68.108:8000/cantor")
+        self.assertEqual(self.client.get("/api/tv/qr").content, old_qr)
 
     def test_tv_websocket_opens_invitation_only_while_connected(self):
         self.add_ready()
@@ -91,6 +105,19 @@ class TvTests(unittest.TestCase):
             websocket.send_json({"token": ""})
             snapshot = websocket.receive_json()
             self.assertEqual(snapshot["invitation"]["request_id"], "song")
+
+    def test_reset_disconnects_singer_websocket(self):
+        response = self.client.post("/api/singers", json={"name": "Cantor"})
+        token = response.json()["token"]
+        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
+            with self.client.websocket_connect("/ws/requests") as websocket:
+                websocket.send_json({"token": token})
+                self.assertEqual(websocket.receive_json()["party"], response.json()["party"])
+                with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "true"}):
+                    self.assertEqual(self.client.post("/api/tv/reset", headers=self.tv_headers).status_code, 200)
+                with self.assertRaises(WebSocketDisconnect) as closed:
+                    websocket.receive_json()
+                self.assertEqual(closed.exception.code, 1008)
 
     def test_legacy_media_moves_into_current_party(self):
         legacy = Path(self.directory.name) / "videos" / "glvVYIhdWlU.mp4"

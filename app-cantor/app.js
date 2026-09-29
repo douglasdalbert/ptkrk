@@ -1,7 +1,6 @@
 import { ConfirmDialog } from "./confirm-dialog.js";
 
 const storageKey = "karaoke.singer";
-const party = new URLSearchParams(location.search).get("party");
 const entry = document.querySelector("#entry");
 const sessionView = document.querySelector("#session");
 const connectionLabel = document.querySelector("#connection");
@@ -16,6 +15,7 @@ const skippingView = document.querySelector("#skipping");
 const skipAction = document.querySelector("#skip-action");
 const skipButton = document.querySelector("#skip-button");
 let singer = null;
+let currentParty = null;
 let socket = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
@@ -53,6 +53,7 @@ function youtubeCode(input) {
 
 function clearSession() {
   singer = null;
+  currentParty = null;
   currentInvitation = null;
   currentSkip = null;
   currentSong = null;
@@ -73,17 +74,22 @@ function clearSession() {
   connectionState("Aguardando");
 }
 
+function partyEnded() {
+  clearSession();
+  const error = document.querySelector("#entry-error");
+  error.textContent = "Festa encerrada. Entre novamente.";
+  error.hidden = false;
+  return new Error(error.textContent);
+}
+
 function showSession(identity) {
   if (!identity.singer_id && identity.client_id) {
     identity.singer_id = identity.client_id;
     delete identity.client_id;
     localStorage.setItem(storageKey, JSON.stringify(identity));
   }
-  if (!party || identity.party !== party) {
-    clearSession();
-    return;
-  }
   singer = identity;
+  currentParty = identity.party || null;
   entry.hidden = true;
   sessionView.hidden = false;
   document.querySelector("#welcome").textContent = identity.name;
@@ -92,6 +98,7 @@ function showSession(identity) {
 }
 
 async function api(path, options = {}) {
+  const requestSinger = singer;
   const response = await fetch(path, {
     ...options,
     headers: {
@@ -99,14 +106,26 @@ async function api(path, options = {}) {
       ...(singer ? { Authorization: `Bearer ${singer.token}` } : {}),
     },
   });
+  if (requestSinger && singer !== requestSinger) throw new Error("Sessão alterada. Tente novamente.");
   if (response.status === 401) {
-    clearSession();
-    throw new Error("Sessão encerrada. Entre novamente.");
+    throw partyEnded();
+  }
+  const responseParty = response.headers.get("X-Karaoke-Party");
+  if (requestSinger && responseParty) {
+    if (requestSinger.party && requestSinger.party !== responseParty) throw partyEnded();
+    if (!requestSinger.party) {
+      requestSinger.party = responseParty;
+      currentParty = responseParty;
+      localStorage.setItem(storageKey, JSON.stringify(requestSinger));
+    }
   }
   if (response.status === 204) return null;
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(typeof payload.detail === "string" ? payload.detail : "Não foi possível concluir a operação.");
+  }
+  if (!requestSinger && path === "/api/singers" && payload.party !== responseParty) {
+    throw new Error("A festa reiniciou. Informe seu nome novamente.");
   }
   return payload;
 }
@@ -124,11 +143,14 @@ function connect() {
     if (current !== socket) return;
     const message = JSON.parse(event.data);
     if (message.type === "requests") {
-      if (message.party !== party) {
-        clearSession();
-        document.querySelector("#entry-error").textContent = "Festa encerrada. Leia o novo QR na TV.";
-        document.querySelector("#entry-error").hidden = false;
+      if (currentParty && message.party !== currentParty) {
+        partyEnded();
         return;
+      }
+      currentParty = message.party;
+      if (!singer.party) {
+        singer.party = message.party;
+        localStorage.setItem(storageKey, JSON.stringify(singer));
       }
       reconnectDelay = 1000;
       connectionState("Ao vivo", true);
@@ -141,9 +163,7 @@ function connect() {
     if (current !== socket || !singer) return;
     socket = null;
     if (event.code === 1008) {
-      clearSession();
-      document.querySelector("#entry-error").textContent = "Festa encerrada. Leia o novo QR na TV.";
-      document.querySelector("#entry-error").hidden = false;
+      partyEnded();
       return;
     }
     connectionState("Reconectando");
@@ -157,9 +177,15 @@ function previewFor(item, placeholder) {
   let cached = previewCache.get(item.video_id);
   if (!cached) {
     cached = { url: null, task: null };
+    const previewSinger = singer;
     cached.task = fetch(`/api/requests/${encodeURIComponent(item.id)}/preview`, {
-      headers: { Authorization: `Bearer ${singer.token}` },
+      headers: { Authorization: `Bearer ${previewSinger.token}` },
     }).then(async (response) => {
+      if (singer !== previewSinger) return;
+      if (response.status === 401 || (previewSinger.party && response.headers.get("X-Karaoke-Party") !== previewSinger.party)) {
+        partyEnded();
+        return;
+      }
       if (!response.ok) return;
       cached.url = URL.createObjectURL(await response.blob());
     }).catch(() => {});
@@ -315,12 +341,10 @@ entryForm.addEventListener("submit", async (event) => {
   button.disabled = true;
   error.hidden = true;
   try {
-    if (!party) throw new Error("Leia o QR da festa na TV para entrar.");
     const identity = await api("/api/singers", {
       method: "POST",
-      body: JSON.stringify({ name: entryForm.elements.name.value.trim(), party }),
+      body: JSON.stringify({ name: entryForm.elements.name.value.trim() }),
     });
-    identity.party = party;
     localStorage.setItem(storageKey, JSON.stringify(identity));
     showSession(identity);
   } catch (problem) {
@@ -361,7 +385,3 @@ try {
   localStorage.removeItem(storageKey);
 }
 if (!singer) connectionState("Aguardando");
-if (!party) {
-  document.querySelector("#entry-error").textContent = "Leia o QR da festa na TV para entrar.";
-  document.querySelector("#entry-error").hidden = false;
-}

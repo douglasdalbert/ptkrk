@@ -37,6 +37,19 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(title="Karaoke", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def identify_party(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        with connection() as database:
+            response.headers["X-Karaoke-Party"] = database.execute(
+                "SELECT generation FROM party WHERE id = 1"
+            ).fetchone()[0]
+    return response
+
+
 SINGER_ROOT = Path(__file__).resolve().parent.parent / "app-cantor"
 TV_ROOT = Path(__file__).resolve().parent.parent / "app-tv"
 app.mount("/cantor/assets", StaticFiles(directory=SINGER_ROOT), name="cantor-assets")
@@ -51,7 +64,6 @@ singer_subscribers: dict[WebSocket, str] = {}
 
 class NewSinger(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    party: str
 
 
 class NewRequest(BaseModel):
@@ -258,9 +270,7 @@ def singer_address(request: Request) -> str:
     address = os.getenv("KARAOKE_LAN_IP", "")
     if not address:
         raise HTTPException(503, "Inicie com start.ps1 para detectar o IP da rede")
-    with connection() as database:
-        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-    return f"http://{address}:8000/cantor?party={generation}"
+    return f"http://{address}:8000/cantor"
 
 
 @app.get("/api/tv/join", dependencies=[Depends(authenticated_tv)])
@@ -286,14 +296,12 @@ def create_singer(payload: NewSinger) -> dict[str, str]:
     token = secrets.token_urlsafe(32)
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
-        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-        if payload.party != generation:
-            raise HTTPException(410, "Festa encerrada. Leia o novo QR na TV")
+        party = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
         database.execute(
             "INSERT INTO singers (id, name, session_hash) VALUES (?, ?, ?)",
             (singer_id, name, hashlib.sha256(token.encode()).hexdigest()),
         )
-    return {"singer_id": singer_id, "name": name, "token": token}
+    return {"singer_id": singer_id, "name": name, "token": token, "party": party}
 
 
 @app.post("/api/requests", status_code=201)

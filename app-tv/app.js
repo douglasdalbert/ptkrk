@@ -132,7 +132,7 @@ async function refreshJoin() {
     const join = await command("/api/tv/join");
     document.querySelector("#join-url").textContent = join.url;
     const qr = document.querySelector("#qr");
-    qr.src = `/api/tv/qr?party=${encodeURIComponent(party)}`;
+    qr.src = "/api/tv/qr";
     qr.hidden = false;
   } catch (problem) {
     document.querySelector("#join-url").textContent = problem.message;
