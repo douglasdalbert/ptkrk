@@ -360,6 +360,7 @@ requestForm.addEventListener("submit", async (event) => {
   const button = requestForm.querySelector("button");
   const message = document.querySelector("#request-message");
   button.disabled = true;
+  message.classList.remove("error");
   message.textContent = "Enviando…";
   try {
     const code = youtubeCode(requestForm.elements.video.value);
@@ -370,6 +371,7 @@ requestForm.addEventListener("submit", async (event) => {
     requestForm.reset();
     message.textContent = "Pedido recebido.";
   } catch (problem) {
+    message.classList.add("error");
     message.textContent = problem.message;
   } finally {
     button.disabled = false;

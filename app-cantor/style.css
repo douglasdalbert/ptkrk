@@ -8,6 +8,7 @@
   --lime: #c7fa45;
   --pink: #fa5a9c;
   --cyan: #64d4c3;
+  --danger: #ff5868;
 }
 
 * { box-sizing: border-box; }
@@ -37,7 +38,8 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .primary { min-height: 50px; padding: 0 22px; border: 0; border-radius: 4px; background: var(--lime); color: #171b0c; font-size: 14px; font-weight: 900; white-space: nowrap; }
 .primary span { margin-left: 12px; }
 .primary:hover:not(:disabled) { background: #ddff87; }
-.error { color: var(--pink); font-size: 13px; }
+.error { display: flex; align-items: flex-start; gap: 9px; max-width: 100%; padding: 10px 12px; border-left: 3px solid var(--danger); border-radius: 3px; background: #ff586824; color: var(--danger); font-size: 13px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.error::before { content: "\26A0\FE0E"; flex: none; font-family: "Segoe UI Symbol", sans-serif; font-size: 18px; line-height: 1; }
 .session-header { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding-top: 28px; }
 .session-header h1 { margin: 0 0 26px; overflow-wrap: anywhere; font-size: 30px; }
 .invitation { margin: 0 0 24px; padding: 16px; background: #252a22; border: 1px solid var(--lime); border-radius: 4px; }
@@ -59,6 +61,7 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .request-row { display: flex; gap: 8px; }
 .request-row input { flex: 1; }
 .message { min-height: 19px; margin: 10px 0 0; color: var(--cyan); font-size: 12px; }
+.message.error { color: var(--danger); font-size: 13px; }
 .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scores div { display: grid; gap: 5px; }
 .scores div + div { padding-left: 16px; border-left: 1px solid var(--border); }
