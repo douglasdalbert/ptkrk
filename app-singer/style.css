@@ -92,6 +92,12 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .message { min-height: 19px; margin: 10px 0 0; color: var(--cyan); font-size: 12px; }
 .message.error { color: var(--danger); font-size: 13px; }
 .failure-alert { position: fixed; z-index: 30; top: max(16px, env(safe-area-inset-top)); left: 16px; right: 16px; max-width: 688px; margin: 0 auto; padding: 12px 14px; border-left: 3px solid var(--danger); border-radius: 3px; background: #351c21f2; color: var(--text); box-shadow: 0 8px 28px #0009; font-size: 13px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.singing-overlay { position: fixed; inset: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; place-content: center; justify-items: center; gap: 18px; padding: 24px; background: #111216f5; color: var(--text); text-align: center; touch-action: none; }
+.singing-overlay[open] { display: grid; }
+.singing-overlay::backdrop { background: #111216; }
+.singing-note { display: grid; width: 132px; height: 132px; place-items: center; border: 3px solid var(--lime); border-radius: 50%; color: var(--pink); font-family: Georgia, serif; font-size: 88px; line-height: 1; box-shadow: 0 0 42px #c7fa4538; animation: singing-pulse 1.8s ease-in-out infinite; }
+.singing-overlay strong { font-family: Georgia, serif; font-size: 28px; font-weight: 400; }
+@keyframes singing-pulse { 50% { transform: scale(1.05); box-shadow: 0 0 58px #c7fa4552; } }
 .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scores div { display: grid; gap: 5px; }
 .scores div + div { padding-left: 16px; border-left: 1px solid var(--border); }

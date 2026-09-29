@@ -17,6 +17,7 @@ const groupList = document.querySelector("#group-list");
 const groupStart = document.querySelector("#group-start");
 const confirmDialog = new ConfirmDialog();
 const skippingView = document.querySelector("#skipping");
+const singingOverlay = document.querySelector("#singing-overlay");
 const actionFooter = document.querySelector("#action-footer");
 const skipAction = document.querySelector("#skip-action");
 const skipButton = document.querySelector("#skip-button");
@@ -31,6 +32,9 @@ let currentSong = null;
 let allowSkip = false;
 let latestItems = [];
 let partySingers = [];
+let joinedGroupRooms = new Set();
+let groupRoomReady = false;
+let groupPollTimer = null;
 let pendingGroupPrompt = null;
 let failureAlertActive = false;
 
@@ -86,8 +90,13 @@ function clearSession() {
   allowSkip = false;
   latestItems = [];
   partySingers = [];
+  joinedGroupRooms.clear();
+  groupRoomReady = false;
+  clearInterval(groupPollTimer);
+  groupPollTimer = null;
   pendingGroupPrompt = null;
   acknowledgedFailures.clear();
+  if (singingOverlay.open) singingOverlay.close();
   invitationView.hidden = true;
   skippingView.hidden = true;
   skipAction.hidden = true;
@@ -184,6 +193,10 @@ function connect() {
   current.addEventListener("message", (event) => {
     if (current !== socket) return;
     const message = JSON.parse(event.data);
+    if (message.type === "group_state") {
+      applyGroupRoomState(message);
+      return;
+    }
     if (message.type === "requests") {
       if (currentParty && message.party !== currentParty) {
         partyEnded();
@@ -199,7 +212,14 @@ function connect() {
       latestItems = message.items;
       partySingers = message.singers || [];
       renderInvitation(message.invitation, message.items);
+      renderSingingOverlay(message.invitation, message.items);
       renderGroupList();
+      const activeItem = message.items.find(item => item.id === message.invitation?.request_id);
+      const ownPendingInvite = activeItem?.backvocals.some(vocal =>
+        vocal.singer_id === singer.singer_id && vocal.joined === 0);
+      if (activeItem && (ownPendingInvite || (groupDialog.open && activeItem.singer_id === singer.singer_id))) {
+        joinGroupRoom(activeItem.id);
+      }
       promptGroupInvite(message.invitation, message.items);
       renderRequests(message.items);
       renderSkip(message);
@@ -213,6 +233,7 @@ function connect() {
       partyEnded();
       return;
     }
+    joinedGroupRooms.clear();
     connectionState("Falha na conexão", "failed");
     reconnectTimer = setTimeout(() => {
       connectionState("Reconectando");
@@ -220,6 +241,39 @@ function connect() {
     }, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 15000);
   });
+}
+
+function joinGroupRoom(requestId) {
+  if (socket?.readyState !== WebSocket.OPEN || joinedGroupRooms.has(requestId)) return;
+  joinedGroupRooms.add(requestId);
+  socket.send(JSON.stringify({ type: "join_group", request_id: requestId }));
+}
+
+function applyGroupRoomState(message) {
+  const item = latestItems.find(request => request.id === message.request_id);
+  if (!item || item.video_id !== message.video_id) return;
+  for (const member of message.members) {
+    const vocal = item.backvocals.find(entry => entry.singer_id === member.singer_id);
+    if (vocal) Object.assign(vocal, member);
+  }
+  renderGroupList();
+}
+
+function startGroupRoomPolling(requestId) {
+  clearInterval(groupPollTimer);
+  groupPollTimer = setInterval(async () => {
+    if (!groupDialog.open || currentInvitation?.request_id !== requestId || !groupRoomReady) {
+      clearInterval(groupPollTimer);
+      groupPollTimer = null;
+      return;
+    }
+    try {
+      const state = await api(`/api/requests/${encodeURIComponent(requestId)}/group/state`);
+      applyGroupRoomState(state);
+    } catch (problem) {
+      if (singer && groupDialog.open) showError(document.querySelector("#group-message"), problem.message);
+    }
+  }, 3000);
 }
 
 function previewFor(item, placeholder) {
@@ -383,6 +437,17 @@ function renderInvitation(invitation, items) {
   if (isNew && !acceptedMine && "vibrate" in navigator) navigator.vibrate([250, 150, 250]);
 }
 
+function renderSingingOverlay(invitation, items) {
+  const item = items.find(request => request.id === invitation?.request_id);
+  const isParticipant = item && singer && (item.singer_id === singer.singer_id ||
+    item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
+  const shouldShow = invitation?.accepted && isParticipant;
+  if (shouldShow && !singingOverlay.open) singingOverlay.showModal();
+  if (!shouldShow && singingOverlay.open) singingOverlay.close();
+}
+
+singingOverlay.addEventListener("cancel", event => event.preventDefault());
+
 function renderGroupList() {
   if (!groupDialog.open || !currentInvitation || !singer) return;
   const item = latestItems.find(request => request.id === currentInvitation.request_id);
@@ -393,7 +458,7 @@ function renderGroupList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "group-person";
-    button.disabled = !!vocal || !!currentInvitation.lead_accepted;
+    button.disabled = !!vocal || !!currentInvitation.lead_accepted || !groupRoomReady;
     const name = document.createElement("span");
     name.textContent = person.name;
     const response = document.createElement("span");
@@ -424,7 +489,7 @@ function renderGroupList() {
   }
   groupList.replaceChildren(content);
   if (!groupList.childNodes.length) groupList.textContent = "Nenhuma outra pessoa na festa.";
-  groupStart.disabled = !!currentInvitation.lead_accepted || !!currentSkip;
+  groupStart.disabled = !groupRoomReady || !!currentInvitation.lead_accepted || !!currentSkip;
 }
 
 function promptGroupInvite(invitation, items) {
@@ -475,12 +540,35 @@ function promptGroupInvite(invitation, items) {
   }
 }
 
-groupButton.addEventListener("click", () => {
+groupButton.addEventListener("click", async () => {
   document.querySelector("#group-message").textContent = "";
+  const requestId = currentInvitation?.request_id;
+  if (!requestId) return;
+  groupRoomReady = false;
   groupDialog.showModal();
   renderGroupList();
+  try {
+    await api(`/api/requests/${encodeURIComponent(requestId)}/group/open`, { method: "POST" });
+    if (!groupDialog.open || currentInvitation?.request_id !== requestId) return;
+    groupRoomReady = true;
+    joinGroupRoom(requestId);
+    renderGroupList();
+    startGroupRoomPolling(requestId);
+  } catch (problem) {
+    showError(document.querySelector("#group-message"), problem.message);
+  }
 });
 document.querySelector("#group-close").addEventListener("click", () => groupDialog.close());
+groupDialog.addEventListener("close", () => {
+  const requestId = currentInvitation?.request_id;
+  clearInterval(groupPollTimer);
+  groupPollTimer = null;
+  if (requestId && joinedGroupRooms.has(requestId) && socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "leave_group", request_id: requestId }));
+    joinedGroupRooms.delete(requestId);
+  }
+  groupRoomReady = false;
+});
 groupStart.addEventListener("click", async () => {
   groupStart.disabled = true;
   try {
@@ -545,7 +633,9 @@ acceptButton.addEventListener("click", async () => {
   if (!currentInvitation || currentInvitation.accepted) return;
   acceptButton.disabled = true;
   try {
-    await api(`/api/requests/${encodeURIComponent(currentInvitation.request_id)}/accept`, { method: "POST" });
+    const result = await api(`/api/requests/${encodeURIComponent(currentInvitation.request_id)}/accept`, { method: "POST" });
+    currentInvitation = result.invitation;
+    renderSingingOverlay(result.invitation, latestItems);
     document.querySelector("#invitation-message").textContent = "Confirmado. Aguarde a TV.";
   } catch (problem) {
     showError(document.querySelector("#invitation-message"), problem.message);

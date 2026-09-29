@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -60,6 +60,7 @@ VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 subscribers: set[WebSocket] = set()
 tv_subscribers: set[WebSocket] = set()
 singer_subscribers: dict[WebSocket, str] = {}
+group_room_subscribers: dict[str, set[WebSocket]] = {}
 
 
 class NewSinger(BaseModel):
@@ -139,6 +140,49 @@ def party_snapshot() -> dict:
             "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers}
 
 
+def group_room_snapshot(request_id: str) -> dict | None:
+    with connection() as database:
+        room = database.execute(
+            """SELECT group_rooms.video_id, requests.video_id AS request_video_id
+               FROM group_rooms JOIN requests ON requests.id = group_rooms.request_id
+               WHERE group_rooms.request_id = ?""", (request_id,),
+        ).fetchone()
+        if room is None or room["video_id"] != room["request_video_id"]:
+            return None
+        members = [dict(row) for row in database.execute(
+            """SELECT backvocals.singer_id, singers.name AS singer_name, backvocals.joined,
+                      backvocals.accepted, backvocals.score_eligible
+               FROM backvocals JOIN singers ON singers.id = backvocals.singer_id
+               WHERE backvocals.request_id = ? ORDER BY backvocals.rowid""",
+            (request_id,),
+        )]
+    return {"type": "group_state", "request_id": request_id, "video_id": room["video_id"],
+            "members": members}
+
+
+def can_join_group_room(request_id: str, singer_id: str) -> bool:
+    with connection() as database:
+        return database.execute(
+            """SELECT 1 FROM group_rooms JOIN requests ON requests.id = group_rooms.request_id
+               WHERE group_rooms.request_id = ? AND group_rooms.video_id = requests.video_id
+                     AND requests.singer_id = ?""", (request_id, singer_id),
+        ).fetchone() is not None
+
+
+async def publish_group_room(request_id: str) -> None:
+    message = group_room_snapshot(request_id)
+    if message is None:
+        return
+    room_subscribers = group_room_subscribers.get(request_id, set())
+    for subscriber in tuple(room_subscribers):
+        try:
+            await subscriber.send_json(message)
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            room_subscribers.discard(subscriber)
+    if not room_subscribers:
+        group_room_subscribers.pop(request_id, None)
+
+
 def skip_enabled() -> bool:
     return os.getenv("KARAOKE_ALLOW_SKIP", "true").lower() in {"true", "1", "yes"}
 
@@ -174,6 +218,8 @@ async def watch_requests() -> None:
 @app.websocket("/ws/requests")
 async def requests_socket(websocket: WebSocket) -> None:
     await websocket.accept()
+    singer_id = None
+    is_tv = False
     try:
         message = await asyncio.wait_for(websocket.receive_json(), timeout=5)
         token = message.get("token") if isinstance(message, dict) else None
@@ -181,9 +227,11 @@ async def requests_socket(websocket: WebSocket) -> None:
         if is_tv and websocket.headers.get("origin") != f"http://{websocket.headers.get('host')}":
             await websocket.close(code=1008)
             return
-        if not is_tv and (not isinstance(token, str) or singer_for_token(token) is None):
-            await websocket.close(code=1008)
-            return
+        if not is_tv:
+            singer_id = singer_for_token(token) if isinstance(token, str) else None
+            if singer_id is None:
+                await websocket.close(code=1008)
+                return
         if is_tv:
             tv_subscribers.add(websocket)
             with connection() as database:
@@ -195,13 +243,33 @@ async def requests_socket(websocket: WebSocket) -> None:
         await websocket.send_json(party_snapshot())
         subscribers.add(websocket)
         while True:
-            await websocket.receive_text()
+            message = await websocket.receive_json()
+            if is_tv or not isinstance(message, dict):
+                continue
+            request_id = message.get("request_id")
+            if not isinstance(request_id, str):
+                continue
+            if message.get("type") == "join_group" and can_join_group_room(request_id, singer_id):
+                group_room_subscribers.setdefault(request_id, set()).add(websocket)
+                state = group_room_snapshot(request_id)
+                if state is not None:
+                    await websocket.send_json(state)
+            elif message.get("type") == "leave_group":
+                room_subscribers = group_room_subscribers.get(request_id)
+                if room_subscribers:
+                    room_subscribers.discard(websocket)
+                    if not room_subscribers:
+                        group_room_subscribers.pop(request_id, None)
     except (WebSocketDisconnect, asyncio.TimeoutError, ValueError):
         pass
     finally:
         subscribers.discard(websocket)
         tv_subscribers.discard(websocket)
         singer_subscribers.pop(websocket, None)
+        for request_id, room_subscribers in tuple(group_room_subscribers.items()):
+            room_subscribers.discard(websocket)
+            if not room_subscribers:
+                group_room_subscribers.pop(request_id, None)
 
 
 
@@ -232,7 +300,7 @@ def tv_reset() -> dict[str, str]:
         previous = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         generation = str(uuid4())
         database.execute("UPDATE party SET generation=? WHERE id=1", (generation,))
-        for table in ("skip_request", "invitation", "missed_invitations", "ready_queue",
+        for table in ("skip_request", "invitation", "missed_invitations", "group_rooms", "ready_queue",
                       "accepted_counts", "requests", "singers"):
             database.execute(f"DELETE FROM {table}")
     shutil.rmtree(MEDIA_ROOT / previous, ignore_errors=True)
@@ -423,26 +491,9 @@ def list_requests(singer_id: str = Depends(authenticated_singer)) -> list[dict]:
     return request_snapshot()
 
 
-@app.post("/api/requests/{request_id}/invite/{guest_id}", status_code=202)
-def invite_guest(request_id: str, guest_id: str, singer_id: str = Depends(authenticated_singer)) -> dict:
-    with connection() as database:
-        database.execute("BEGIN IMMEDIATE")
-        request = database.execute("SELECT singer_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
-        invitation = invitation_state(database)
-        if (not request or request["singer_id"] != singer_id or request["status"] != "ready"
-                or not invitation or invitation["request_id"] != request_id or invitation["accepted"]
-                or invitation["lead_accepted"] or skip_state(database)):
-            raise HTTPException(409, "Convite indisponível")
-        if guest_id == singer_id or not database.execute("SELECT 1 FROM singers WHERE id = ?", (guest_id,)).fetchone():
-            raise HTTPException(404, "Pessoa não encontrada")
-        if database.execute("SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ?", (request_id, guest_id)).fetchone():
-            raise HTTPException(409, "Pessoa já convidada")
-        database.execute("INSERT INTO backvocals(request_id, singer_id, joined) VALUES (?, ?, 0)", (request_id, guest_id))
-    return {"status": "pending"}
-
-
 @app.post("/api/requests/{request_id}/invite/respond")
-def respond_to_invite(request_id: str, accepted: bool, singer_id: str = Depends(authenticated_singer)) -> dict:
+def respond_to_invite(request_id: str, accepted: bool, singer_id: str = Depends(authenticated_singer),
+                      background_tasks: BackgroundTasks = None) -> dict:
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         invitation = invitation_state(database)
@@ -458,17 +509,74 @@ def respond_to_invite(request_id: str, accepted: bool, singer_id: str = Depends(
             "SELECT 1 FROM backvocals WHERE request_id = ? AND joined >= 0 AND accepted = 0", (request_id,),
         ).fetchone():
             database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
+    if background_tasks is not None:
+        background_tasks.add_task(publish_group_room, request_id)
     return {"status": "accepted" if accepted else "declined"}
 
 
+@app.post("/api/requests/{request_id}/group/open")
+def open_group_room(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        request = database.execute(
+            "SELECT singer_id, video_id, status FROM requests WHERE id = ?", (request_id,),
+        ).fetchone()
+        invitation = invitation_state(database)
+        if (not request or request["singer_id"] != singer_id or request["status"] != "ready"
+                or not invitation or invitation["request_id"] != request_id or skip_state(database)):
+            raise HTTPException(409, "Grupo indisponível")
+        database.execute(
+            "INSERT INTO group_rooms(request_id, video_id, opened_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(request_id) DO UPDATE SET video_id = excluded.video_id",
+            (request_id, request["video_id"], time.time()),
+        )
+    return group_room_snapshot(request_id)
+
+
+@app.get("/api/requests/{request_id}/group/state")
+def get_group_room_state(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict:
+    if not can_join_group_room(request_id, singer_id):
+        raise HTTPException(404, "Grupo indisponível")
+    state = group_room_snapshot(request_id)
+    if state is None:
+        raise HTTPException(404, "Grupo indisponível")
+    return state
+
+
+@app.post("/api/requests/{request_id}/invite/{guest_id}", status_code=202)
+def invite_guest(request_id: str, guest_id: str, singer_id: str = Depends(authenticated_singer),
+                 background_tasks: BackgroundTasks = None) -> dict:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        request = database.execute("SELECT singer_id, video_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
+        invitation = invitation_state(database)
+        if (not request or request["singer_id"] != singer_id or request["status"] != "ready"
+                or not invitation or invitation["request_id"] != request_id or invitation["accepted"]
+                or invitation["lead_accepted"] or skip_state(database)):
+            raise HTTPException(409, "Convite indisponível")
+        if guest_id == singer_id or not database.execute("SELECT 1 FROM singers WHERE id = ?", (guest_id,)).fetchone():
+            raise HTTPException(404, "Pessoa não encontrada")
+        if database.execute("SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ?", (request_id, guest_id)).fetchone():
+            raise HTTPException(409, "Pessoa já convidada")
+        database.execute(
+            "INSERT OR IGNORE INTO group_rooms(request_id, video_id, opened_at) VALUES (?, ?, ?)",
+            (request_id, request["video_id"], time.time()),
+        )
+        database.execute("INSERT INTO backvocals(request_id, singer_id, joined) VALUES (?, ?, 0)", (request_id, guest_id))
+    if background_tasks is not None:
+        background_tasks.add_task(publish_group_room, request_id)
+    return {"status": "pending"}
+
+
 @app.post("/api/requests/{request_id}/accept")
-def accept_request(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict[str, str]:
+def accept_request(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict:
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         now = time.time()
         if not accept_invitation(database, request_id, singer_id, now):
             raise HTTPException(409, "Convite indisponível ou de outra pessoa")
-    return {"status": "accepted"}
+        invitation = invitation_state(database)
+    return {"status": "accepted", "invitation": invitation}
 
 
 @app.post("/api/requests/{request_id}/skip", status_code=202)
@@ -512,6 +620,8 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
             ).fetchone():
                 database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
             return
+        database.execute("DELETE FROM group_rooms WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM backvocals WHERE request_id = ?", (request_id,))
         database.execute("UPDATE requests SET status = 'removed' WHERE id = ?", (request_id,))
         database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]

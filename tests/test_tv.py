@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -6,6 +7,7 @@ from unittest.mock import patch
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
+from app.invitations import start_invitation
 from app.main import app
 from app.queue import enqueue_request
 from app.storage import connection
@@ -142,6 +144,61 @@ class TvTests(unittest.TestCase):
             websocket.send_json({"token": ""})
             snapshot = websocket.receive_json()
             self.assertEqual(snapshot["invitation"]["request_id"], "song")
+
+    def test_group_responses_are_published_to_the_lead_singer_websocket(self):
+        lead = self.client.post("/api/singers", json={"name": "Cantor"}).json()
+        guests = [self.client.post("/api/singers", json={"name": name}).json()
+                  for name in ("Convidada", "Convidado")]
+        with connection() as database:
+            database.execute("INSERT INTO requests(id, singer_id, video_id, status) "
+                             "VALUES ('song', ?, 'glvVYIhdWlU', 'ready')", (lead["singer_id"],))
+            enqueue_request(database, "song")
+            start_invitation(database, time.time())
+        lead_headers = {"Authorization": f"Bearer {lead['token']}"}
+        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
+            with self.client.websocket_connect("/ws/requests") as lead_socket:
+                lead_socket.send_json({"token": lead["token"]})
+                lead_socket.receive_json()
+                opened = self.client.post("/api/requests/song/group/open", headers=lead_headers)
+                self.assertEqual(opened.status_code, 200)
+                lead_socket.send_json({"type": "join_group", "request_id": "song"})
+                initial_group = lead_socket.receive_json()
+                self.assertEqual(initial_group["type"], "group_state")
+                self.assertEqual(initial_group["video_id"], "glvVYIhdWlU")
+
+                def receive_response(expected_singer_id, expected_joined):
+                    for _ in range(4):
+                        message = lead_socket.receive_json()
+                        if message.get("type") != "group_state":
+                            continue
+                        member = next((entry for entry in message["members"]
+                                       if entry["singer_id"] == expected_singer_id), None)
+                        if member and member["joined"] == expected_joined:
+                            return message
+                    self.fail("The group room did not publish the expected response")
+
+                for guest, accepted in zip(guests, (False, True)):
+                    with self.client.websocket_connect("/ws/requests") as guest_socket:
+                        guest_socket.send_json({"token": guest["token"]})
+                        guest_socket.receive_json()
+                        guest_headers = {"Authorization": f"Bearer {guest['token']}"}
+                        invited = self.client.post("/api/requests/song/invite/" + guest["singer_id"],
+                                                   headers=lead_headers)
+                        self.assertEqual(invited.status_code, 202)
+                        receive_response(guest["singer_id"], 0)
+                        response = self.client.post(
+                            f"/api/requests/song/invite/respond?accepted={str(accepted).lower()}",
+                            headers=guest_headers,
+                        )
+                        self.assertEqual(response.status_code, 200, response.text)
+                        updated = receive_response(guest["singer_id"], 1 if accepted else -1)
+                        vocal = next(member for member in updated["members"]
+                                     if member["singer_id"] == guest["singer_id"])
+                        self.assertEqual(vocal["joined"], 1 if accepted else -1)
+                        persisted = self.client.get("/api/requests/song/group/state", headers=lead_headers)
+                        self.assertEqual(persisted.json()["members"], updated["members"])
+                        self.assertEqual(self.client.get("/api/requests/song/group/state", headers=guest_headers).status_code,
+                                         404)
 
     def test_reset_disconnects_singer_websocket(self):
         response = self.client.post("/api/singers", json={"name": "Cantor"})

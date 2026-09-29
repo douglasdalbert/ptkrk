@@ -68,6 +68,8 @@ def apply_skip(database: sqlite3.Connection, now: float) -> dict | None:
         item = database.execute("SELECT video_id FROM requests WHERE id = ?", (request_id,)).fetchone()
         database.execute("UPDATE requests SET status = 'skipped' WHERE id = ?", (request_id,))
         database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM group_rooms WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM backvocals WHERE request_id = ?", (request_id,))
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
         remove_unused_media(database, item["video_id"], generation)
     else:
@@ -130,6 +132,8 @@ def finish_song(database: sqlite3.Connection, request_id: str, now: float) -> bo
     database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
     generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
     remove_unused_media(database, item["video_id"], generation)
+    database.execute("DELETE FROM group_rooms WHERE request_id = ?", (request_id,))
+    database.execute("DELETE FROM backvocals WHERE request_id = ?", (request_id,))
     for position, row in enumerate(database.execute(
         "SELECT request_id FROM ready_queue ORDER BY position"
     ).fetchall(), start=1):

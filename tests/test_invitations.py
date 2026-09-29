@@ -79,6 +79,22 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(database.execute("SELECT status FROM requests WHERE id='A1'").fetchone()[0], "played")
         self.assertNotIn("A1", [item["id"] for item in party_snapshot()["items"]])
 
+    def test_finishing_group_song_cleans_temporary_room_and_responses(self):
+        with connection() as database:
+            start_invitation(database, 100)
+        invite_guest("A1", "B", "A")
+        self.assertEqual(respond_to_invite("A1", True, "B")["status"], "accepted")
+        self.assertEqual(accept_request("A1", "A")["status"], "accepted")
+        self.assertEqual(accept_request("A1", "B")["status"], "accepted")
+        with connection() as database:
+            self.assertTrue(finish_song(database, "A1", 150))
+            self.assertEqual(
+                database.execute("SELECT COUNT(*) FROM group_rooms WHERE request_id = 'A1'").fetchone()[0], 0,
+            )
+            self.assertEqual(
+                database.execute("SELECT COUNT(*) FROM backvocals WHERE request_id = 'A1'").fetchone()[0], 0,
+            )
+
     def test_only_owner_can_accept_once_without_auto_deadline(self):
         with connection() as database:
             start_invitation(database, 100)
@@ -199,7 +215,9 @@ class InvitationTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as not_owner:
                 accept_request("A1", "B")
             self.assertEqual(not_owner.exception.status_code, 409)
-            self.assertEqual(accept_request("A1", "A"), {"status": "accepted"})
+            accepted = accept_request("A1", "A")
+            self.assertEqual(accepted["status"], "accepted")
+            self.assertTrue(accepted["invitation"]["accepted"])
             with self.assertRaises(HTTPException):
                 accept_request("A1", "A")
         self.assertTrue(party_snapshot()["invitation"]["accepted"])

@@ -58,6 +58,11 @@ def initialize() -> None:
                 accepted INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (request_id, singer_id)
             );
+            CREATE TABLE IF NOT EXISTS group_rooms (
+                request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+                video_id TEXT NOT NULL,
+                opened_at REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS ready_queue (
                 request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
                 position INTEGER NOT NULL
