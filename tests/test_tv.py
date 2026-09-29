@@ -97,6 +97,43 @@ class TvTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/tv/join").json()["url"], "http://192.168.68.108:8000/cantor")
         self.assertEqual(self.client.get("/api/tv/qr").content, old_qr)
 
+    def test_reentering_same_name_restores_existing_request_list(self):
+        first = self.client.post("/api/singers", json={"name": "  Cantora  Unica "}).json()
+        first_headers = {"Authorization": f"Bearer {first['token']}"}
+        created = self.client.post("/api/requests", json={"youtubeCode": "glvVYIhdWlU"}, headers=first_headers)
+        self.assertEqual(created.status_code, 201)
+
+        resumed = self.client.post("/api/singers", json={"name": "cantora unica"}).json()
+        self.assertEqual(resumed["singer_id"], first["singer_id"])
+        self.assertEqual(resumed["name"], first["name"])
+        self.assertNotEqual(resumed["token"], first["token"])
+        self.assertEqual(self.client.get("/api/requests", headers={
+            "Authorization": f"Bearer {resumed['token']}"
+        }).json()[0]["id"], created.json()["id"])
+        self.assertEqual(self.client.get("/api/requests", headers=first_headers).status_code, 401)
+
+    def test_same_name_recovery_consolidates_legacy_profiles(self):
+        primary = self.client.post("/api/singers", json={"name": "Cantor"}).json()
+        with connection() as database:
+            database.execute("INSERT INTO singers(id, name, session_hash) VALUES ('duplicate', ' cantor ', 'old-hash')")
+            database.execute("INSERT INTO requests(id, singer_id, video_id) VALUES ('legacy-song', 'duplicate', 'glvVYIhdWlU')")
+            enqueue_request(database, "legacy-song")
+            database.execute("INSERT INTO accepted_counts(singer_id, total) VALUES (?, 2)", (primary["singer_id"],))
+            database.execute("INSERT INTO accepted_counts(singer_id, total) VALUES ('duplicate', 3)")
+        response = self.client.post("/api/singers", json={"name": "CANTOR"})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["singer_id"], primary["singer_id"])
+        requests = self.client.get("/api/requests", headers={
+            "Authorization": f"Bearer {response.json()['token']}"
+        }).json()
+        self.assertIn("legacy-song", {request["id"] for request in requests})
+        with connection() as database:
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM singers WHERE lower(trim(name)) = 'cantor'").fetchone()[0], 1)
+            self.assertEqual(database.execute("SELECT singer_id FROM requests WHERE id = 'legacy-song'").fetchone()[0],
+                             primary["singer_id"])
+            self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE singer_id = ?",
+                                              (primary["singer_id"],)).fetchone()[0], 5)
+
     def test_tv_websocket_opens_invitation_only_while_connected(self):
         self.add_ready()
         with self.client.websocket_connect("/ws/requests", headers={

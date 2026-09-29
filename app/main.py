@@ -302,15 +302,84 @@ def create_singer(payload: NewSinger) -> dict[str, str]:
     name = payload.name.strip()
     if not name:
         raise HTTPException(422, "Informe seu nome")
-    singer_id = str(uuid4())
     token = secrets.token_urlsafe(32)
+    session_hash = hashlib.sha256(token.encode()).hexdigest()
+    normalized_name = " ".join(name.split()).casefold()
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         party = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-        database.execute(
-            "INSERT INTO singers (id, name, session_hash) VALUES (?, ?, ?)",
-            (singer_id, name, hashlib.sha256(token.encode()).hexdigest()),
-        )
+        matches = [row for row in database.execute("SELECT id, name FROM singers ORDER BY created_at, rowid")
+                   if " ".join(row["name"].split()).casefold() == normalized_name]
+        if matches:
+            singer_id = matches[0]["id"]
+            name = matches[0]["name"]
+            duplicates = [row["id"] for row in matches[1:]]
+            if duplicates:
+                database.executemany(
+                    "UPDATE requests SET singer_id = ? WHERE singer_id = ?",
+                    [(singer_id, duplicate_id) for duplicate_id in duplicates],
+                )
+                for duplicate_id in duplicates:
+                    vocals = database.execute(
+                        "SELECT request_id, accepted, joined, score_eligible FROM backvocals WHERE singer_id = ?",
+                        (duplicate_id,),
+                    ).fetchall()
+                    for vocal in vocals:
+                        owner = database.execute(
+                            "SELECT singer_id FROM requests WHERE id = ?", (vocal["request_id"],)
+                        ).fetchone()
+                        if owner and owner["singer_id"] == singer_id:
+                            database.execute(
+                                "DELETE FROM backvocals WHERE request_id = ? AND singer_id = ?",
+                                (vocal["request_id"], duplicate_id),
+                            )
+                            continue
+                        existing = database.execute(
+                            "SELECT accepted, joined, score_eligible FROM backvocals WHERE request_id = ? AND singer_id = ?",
+                            (vocal["request_id"], singer_id),
+                        ).fetchone()
+                        if existing:
+                            joined = 1 if 1 in (existing["joined"], vocal["joined"]) else (
+                                0 if 0 in (existing["joined"], vocal["joined"]) else -1
+                            )
+                            database.execute(
+                                "UPDATE backvocals SET accepted = ?, joined = ?, score_eligible = ? WHERE request_id = ? AND singer_id = ?",
+                                (max(existing["accepted"], vocal["accepted"]), joined,
+                                 max(existing["score_eligible"], vocal["score_eligible"]), vocal["request_id"], singer_id),
+                            )
+                            database.execute(
+                                "DELETE FROM backvocals WHERE request_id = ? AND singer_id = ?",
+                                (vocal["request_id"], duplicate_id),
+                            )
+                        else:
+                            database.execute(
+                                "UPDATE backvocals SET singer_id = ? WHERE request_id = ? AND singer_id = ?",
+                                (singer_id, vocal["request_id"], duplicate_id),
+                            )
+                accepted_total = database.execute(
+                    "SELECT COALESCE(SUM(total), 0) FROM accepted_counts WHERE singer_id IN (?, {})".format(
+                        ",".join("?" for _ in duplicates)
+                    ), (singer_id, *duplicates),
+                ).fetchone()[0]
+                count_exists = database.execute(
+                    "SELECT 1 FROM accepted_counts WHERE singer_id IN ({}) LIMIT 1".format(
+                        ",".join("?" for _ in [singer_id, *duplicates])
+                    ), (singer_id, *duplicates),
+                ).fetchone()
+                if count_exists:
+                    database.execute(
+                        "INSERT INTO accepted_counts(singer_id, total) VALUES (?, ?) "
+                        "ON CONFLICT(singer_id) DO UPDATE SET total = excluded.total",
+                        (singer_id, accepted_total),
+                    )
+                database.executemany("DELETE FROM singers WHERE id = ?", [(duplicate_id,) for duplicate_id in duplicates])
+            database.execute("UPDATE singers SET session_hash = ? WHERE id = ?", (session_hash, singer_id))
+        else:
+            singer_id = str(uuid4())
+            database.execute(
+                "INSERT INTO singers (id, name, session_hash) VALUES (?, ?, ?)",
+                (singer_id, name, session_hash),
+            )
     return {"singer_id": singer_id, "name": name, "token": token, "party": party}
 
 
