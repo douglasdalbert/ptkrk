@@ -52,6 +52,7 @@ async def identify_party(request: Request, call_next):
 
 SINGER_ROOT = Path(__file__).resolve().parent.parent / "app-singer"
 TV_ROOT = Path(__file__).resolve().parent.parent / "app-tv"
+app.mount("/assets", StaticFiles(directory=SINGER_ROOT / "assets"), name="shared-assets")
 app.mount("/cantor/assets", StaticFiles(directory=SINGER_ROOT), name="cantor-assets")
 if os.getenv("KARAOKE_TV_LOCAL") == "true":
     app.mount("/tv/assets", StaticFiles(directory=TV_ROOT), name="tv-assets")

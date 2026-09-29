@@ -1,8 +1,9 @@
 name: karaoke
 
 services:
-  app:
+  app-singer:
     build: .
+    container_name: app-singer
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       KARAOKE_ALLOW_SKIP: ${KARAOKE_ALLOW_SKIP:-true}
@@ -10,8 +11,23 @@ services:
     ports:
       - "${KARAOKE_PORT:-8000}:8000"
     volumes:
+      - ./app:/srv/app
+      - ./app-singer:/srv/app-singer
+      - ./app-tv:/srv/app-tv
       - db_data:/data
       - media_data:/media
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/srv/app",
+      ]
     restart: unless-stopped
     healthcheck:
       test:
@@ -25,7 +41,8 @@ services:
       timeout: 5s
       retries: 3
 
-  tv:
+  app-tv:
+    container_name: app-tv
     build: .
     environment:
       NODE_ENV: ${NODE_ENV:-production}
@@ -34,18 +51,34 @@ services:
     ports:
       - "127.0.0.1:8001:8000"
     volumes:
+      - ./app:/srv/app
+      - ./app-singer:/srv/app-singer
+      - ./app-tv:/srv/app-tv
       - db_data:/data
       - media_data:/media
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/srv/app",
+      ]
     restart: unless-stopped
 
   worker:
     build: .
-    command: ["python", "-m", "app.worker"]
     environment:
       NODE_ENV: ${NODE_ENV:-production}
     volumes:
+      - ./app:/srv/app
       - db_data:/data
       - media_data:/media
+    command: ["watchfiles", "python -m app.worker", "/srv/app"]
     restart: unless-stopped
 
 volumes:

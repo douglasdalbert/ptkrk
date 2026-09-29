@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 170" role="img" aria-labelledby="title desc">
+  <title id="title">Grupo cantando</title>
+  <desc id="desc">Cinco pessoas coloridas cantando sob notas musicais</desc>
+  <g fill="none" stroke="#0f4b9d" stroke-linecap="round" stroke-linejoin="round" stroke-width="7">
+    <path d="M55 42 43 30m-8 38-17-5m25 30-16 6M365 42l12-12m8 38 17-5m-25 30 16 6"/>
+    <path fill="#124b9f" d="M165 42V15l29-8v29"/>
+    <ellipse fill="#246ee8" cx="153" cy="48" rx="13" ry="10"/>
+    <ellipse fill="#246ee8" cx="194" cy="36" rx="13" ry="10"/>
+    <path fill="#124b9f" d="m94 31-5-19 23-7 5 19"/>
+    <ellipse fill="#124b9f" cx="87" cy="40" rx="10" ry="8"/>
+    <ellipse fill="#124b9f" cx="117" cy="31" rx="10" ry="8"/>
+    <path fill="#124b9f" d="m314 31 5-19 23 7-5 19"/>
+    <ellipse fill="#124b9f" cx="307" cy="40" rx="10" ry="8"/>
+    <ellipse fill="#124b9f" cx="337" cy="49" rx="10" ry="8"/>
+  </g>
+  <g stroke="#fff" stroke-width="2">
+    <circle fill="#35b59c" cx="78" cy="103" r="27"/>
+    <path fill="#35b59c" d="M43 158q5-34 35-34t35 34Z"/>
+    <circle fill="#ffb719" cx="142" cy="91" r="31"/>
+    <path fill="#ffb719" d="M101 158q6-39 41-39t41 39Z"/>
+    <circle fill="#2474ed" cx="211" cy="78" r="37"/>
+    <path fill="#2474ed" d="M160 158q7-48 51-48t51 48Z"/>
+    <circle fill="#fa4b5a" cx="282" cy="91" r="31"/>
+    <path fill="#fa4b5a" d="M241 158q6-39 41-39t41 39Z"/>
+    <circle fill="#8054df" cx="345" cy="103" r="27"/>
+    <path fill="#8054df" d="M310 158q5-34 35-34t35 34Z"/>
+  </g>
+  <g fill="#fff">
+    <path d="M67 101q11-4 22 0-2 12-11 12t-11-12Z"/>
+    <path d="M130 89q12-5 24 0-3 14-12 14t-12-14Z"/>
+    <path d="M196 76q15-5 30 0-3 16-15 16t-15-16Z"/>
+    <path d="M270 89q12-5 24 0-3 14-12 14t-12-14Z"/>
+    <path d="M336 101q11-4 22 0-2 12-11 12t-11-12Z"/>
+  </g>
+</svg>
