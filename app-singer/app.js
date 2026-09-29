@@ -329,7 +329,10 @@ function renderRequests(items) {
     if (item.singer_id === singer?.singer_id) songSinger.className = "current-singer";
     singerName.append(songSinger);
     for (const vocal of item.backvocals.filter(vocal => vocal.joined === 1)) {
-      singerName.append(document.createTextNode(` + ${vocal.singer_name}`));
+      const vocalName = document.createElement("span");
+      vocalName.textContent = vocal.singer_name;
+      if (vocal.singer_id === singer?.singer_id) vocalName.className = "current-singer";
+      singerName.append(document.createTextNode(" + "), vocalName);
     }
     details.append(title, singerName);
     const status = document.createElement("span");
