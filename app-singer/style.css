@@ -105,6 +105,7 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .scores span { color: var(--muted); font-size: 10px; font-weight: 800; }
 .scores strong { color: var(--lime); font-family: Georgia, serif; font-size: 27px; font-weight: 400; }
 .requests { margin-top: 28px; }
+.current-singer { color: var(--lime); font-weight: 700; }
 .section-heading { display: flex; align-items: baseline; gap: 10px; }
 .section-heading h2 { margin: 0; font-size: 20px; }
 .section-heading span { color: var(--lime); font-size: 12px; }

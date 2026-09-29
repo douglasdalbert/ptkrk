@@ -324,7 +324,13 @@ function renderRequests(items) {
     const title = document.createElement("strong");
     title.textContent = item.title || `youtube.com/watch?v=${item.video_id}`;
     const singerName = document.createElement("small");
-    singerName.textContent = [item.singer_name, ...item.backvocals.filter(vocal => vocal.joined === 1).map(vocal => vocal.singer_name)].join(" + ");
+    const songSinger = document.createElement("span");
+    songSinger.textContent = item.singer_name;
+    if (item.singer_id === singer?.singer_id) songSinger.className = "current-singer";
+    singerName.append(songSinger);
+    for (const vocal of item.backvocals.filter(vocal => vocal.joined === 1)) {
+      singerName.append(document.createTextNode(` + ${vocal.singer_name}`));
+    }
     details.append(title, singerName);
     const status = document.createElement("span");
     status.className = `status ${item.status}`;
