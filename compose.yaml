@@ -8,12 +8,10 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       KARAOKE_ALLOW_SKIP: ${KARAOKE_ALLOW_SKIP:-true}
       KARAOKE_LAN_IP: ${KARAOKE_LAN_IP:-}
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "${KARAOKE_PORT:-8000}:8000"
     volumes:
-      - ./app:/srv/app
-      - ./app-singer:/srv/app-singer
-      - ./app-tv:/srv/app-tv
       - db_data:/data
       - media_data:/media
     command:
@@ -29,6 +27,22 @@ services:
         "/srv/app",
       ]
     restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ./app
+          target: /srv/app
+          initial_sync: true
+          ignore:
+            - __pycache__/
+        - action: sync
+          path: ./app-singer
+          target: /srv/app-singer
+          initial_sync: true
+        - action: rebuild
+          path: ./Dockerfile
+        - action: rebuild
+          path: ./requirements.txt
     healthcheck:
       test:
         [
@@ -48,12 +62,10 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       KARAOKE_TV_LOCAL: "true"
       KARAOKE_LAN_IP: ${KARAOKE_LAN_IP:-}
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "127.0.0.1:8001:8000"
     volumes:
-      - ./app:/srv/app
-      - ./app-singer:/srv/app-singer
-      - ./app-tv:/srv/app-tv
       - db_data:/data
       - media_data:/media
     command:
@@ -69,17 +81,49 @@ services:
         "/srv/app",
       ]
     restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ./app
+          target: /srv/app
+          initial_sync: true
+          ignore:
+            - __pycache__/
+        - action: sync
+          path: ./app-singer
+          target: /srv/app-singer
+          initial_sync: true
+        - action: sync
+          path: ./app-tv
+          target: /srv/app-tv
+          initial_sync: true
+        - action: rebuild
+          path: ./Dockerfile
+        - action: rebuild
+          path: ./requirements.txt
 
   worker:
     build: .
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
-      - ./app:/srv/app
       - db_data:/data
       - media_data:/media
     command: ["watchfiles", "python -m app.worker", "/srv/app"]
     restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ./app
+          target: /srv/app
+          initial_sync: true
+          ignore:
+            - __pycache__/
+        - action: rebuild
+          path: ./Dockerfile
+        - action: rebuild
+          path: ./requirements.txt
 
 volumes:
   db_data:

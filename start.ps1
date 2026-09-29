@@ -10,3 +10,5 @@ Write-Host 'TV no computador host: http://localhost:8001/tv'
 Write-Host "Enviando KARAOKE_LAN_IP=$($env:KARAOKE_LAN_IP) para os containers."
 docker compose up -d --build
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao iniciar os containers.' }
+docker compose watch
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao monitorar alterações.' }
