@@ -183,18 +183,18 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(start_invitation(database, 100)["request_id"], "B1")
             self.assertEqual(self.order(database), ["A1", "B1", "C1", "A2"])
 
-    def test_fifth_ready_cannot_jump_unprepared_podium(self):
+    def test_third_ready_cannot_jump_unprepared_podium(self):
         with connection() as database:
-            database.execute("UPDATE requests SET status = 'processing' WHERE id IN ('A1', 'B1', 'C1', 'A2')")
+            database.execute("UPDATE requests SET status = 'processing' WHERE id IN ('A1', 'B1')")
             database.execute(
                 "INSERT INTO requests(id, singer_id, video_id, status) VALUES ('B2', 'B', 'glvVYIhdWlU', 'ready')"
             )
             from app.queue import enqueue_request
             enqueue_request(database, "B2")
-            self.assertEqual(self.order(database)[:4], ["A1", "B1", "C1", "A2"])
+            self.assertEqual(self.order(database)[:2], ["A1", "B1"])
             self.assertIsNone(start_invitation(database, 100))
-            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'C1'")
-            self.assertEqual(start_invitation(database, 101)["request_id"], "C1")
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'A1'")
+            self.assertEqual(start_invitation(database, 101)["request_id"], "A1")
 
     def test_deadline_survives_restart(self):
         with connection() as database:

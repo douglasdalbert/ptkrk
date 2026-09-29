@@ -43,11 +43,11 @@ class QueueTests(unittest.TestCase):
         for request_id in ("A1", "B1", "A2", "B2", "A3", "B3", "A4", "B4", "A5", "B5", "A6", "A7"):
             self.add_ready(request_id)
 
-    def test_four_protected_and_new_b_between_a6_and_a7(self):
+    def test_two_protected_and_new_b_between_a6_and_a7(self):
         self.seed_ab()
         self.add_ready("B6")
         order = self.order()
-        self.assertEqual(order[:4], ["A1", "B1", "A2", "B2"])
+        self.assertEqual(order[:2], ["A1", "B1"])
         self.assertEqual(order[order.index("A6"):order.index("A7") + 1], ["A6", "B6", "A7"])
         self.assertEqual([row["position"] for row in request_snapshot()], list(range(1, 14)))
 
@@ -55,9 +55,9 @@ class QueueTests(unittest.TestCase):
         for request_id in ("A1", "B1", "A2", "B2", "A3", "B3", "A4"):
             self.add_ready(request_id)
         self.add_ready("C1")
-        self.assertEqual(self.order()[:7], ["A1", "B1", "A2", "B2", "C1", "A3", "B3"])
+        self.assertEqual(self.order()[:7], ["A1", "B1", "C1", "A2", "B2", "A3", "B3"])
         self.add_ready("C2")
-        self.assertEqual(self.order(), ["A1", "B1", "A2", "B2", "C1", "A3", "B3", "C2", "A4"])
+        self.assertEqual(self.order(), ["A1", "B1", "C1", "A2", "B2", "C2", "A3", "B3", "A4"])
 
     def test_fewer_accepted_wins_same_waiting_round(self):
         for request_id in ("A1", "B1", "A2", "B2", "A3"):

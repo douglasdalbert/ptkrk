@@ -1,6 +1,7 @@
 import sqlite3
 
 from app.media import remove_unused_media
+from app.queue import PROTECTED_QUEUE_SIZE
 
 SKIP_SECONDS = 5
 
@@ -24,10 +25,10 @@ def start_invitation(database: sqlite3.Connection, now: float, exclude_request_i
     first = database.execute(
         """SELECT ready_queue.request_id FROM ready_queue
            JOIN requests ON requests.id = ready_queue.request_id
-                     WHERE ready_queue.position <= 4 AND requests.status = 'ready'
+                                         WHERE ready_queue.position <= ? AND requests.status = 'ready'
                            AND (? IS NULL OR ready_queue.request_id != ?)
                      ORDER BY ready_queue.position LIMIT 1""",
-                       (exclude_request_id, exclude_request_id),
+                                             (PROTECTED_QUEUE_SIZE, exclude_request_id, exclude_request_id),
     ).fetchone()
     if first is None:
         return None
@@ -81,9 +82,9 @@ def apply_skip(database: sqlite3.Connection, now: float) -> dict | None:
     database.execute("DELETE FROM invitation WHERE id = 1")
     next_ready = database.execute(
         """SELECT ready_queue.request_id FROM ready_queue JOIN requests ON requests.id = ready_queue.request_id
-           WHERE ready_queue.position <= 4 AND requests.status = 'ready'
+              WHERE ready_queue.position <= ? AND requests.status = 'ready'
              AND ready_queue.request_id != ? ORDER BY ready_queue.position LIMIT 1""",
-        (request_id,),
+          (PROTECTED_QUEUE_SIZE, request_id),
     ).fetchone()
     if next_ready:
         start_invitation(database, now, exclude_request_id=request_id)

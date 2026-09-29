@@ -2,6 +2,9 @@ import sqlite3
 from collections import Counter
 
 
+PROTECTED_QUEUE_SIZE = 2
+
+
 def enqueue_request(database: sqlite3.Connection, request_id: str) -> None:
     rows = database.execute(
         """SELECT ready_queue.request_id, requests.singer_id,
@@ -12,7 +15,7 @@ def enqueue_request(database: sqlite3.Connection, request_id: str) -> None:
            WHERE requests.status IN ('pending', 'processing', 'ready')
            ORDER BY ready_queue.position"""
     ).fetchall()
-    protected = rows[:4]
+    protected = rows[:PROTECTED_QUEUE_SIZE]
     newcomer = database.execute(
         """SELECT requests.id AS request_id, requests.singer_id,
                   COALESCE(accepted_counts.total, 0) AS accepted
@@ -27,7 +30,7 @@ def enqueue_request(database: sqlite3.Connection, request_id: str) -> None:
     protected_counts = Counter(row["singer_id"] for row in protected)
     rounds = Counter()
     candidates = []
-    for original_order, row in enumerate([*rows[4:], newcomer]):
+    for original_order, row in enumerate([*rows[PROTECTED_QUEUE_SIZE:], newcomer]):
         singer_id = row["singer_id"]
         candidates.append((rounds[singer_id], row["accepted"] + protected_counts[singer_id], original_order, row))
         rounds[singer_id] += 1
