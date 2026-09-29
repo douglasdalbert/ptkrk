@@ -28,7 +28,11 @@ button { cursor:pointer; }
 .feature-text p { font-size:clamp(12px,1.5vw,20px); margin:0 0 8px; color:var(--lime); }
 .feature-text h1 { font-family:Georgia,serif; font-size:clamp(24px,3.2vw,54px); font-weight:400; line-height:1.08; margin:0 0 8px; overflow-wrap:anywhere; }
 #next-singer { color:var(--white); }
-.connect-status { position:absolute; z-index:20; top:12px; right:16px; padding:5px 9px; background:#090c0cba; color:var(--lime); font-size:12px; font-weight:bold; }
+.connect-status { position:absolute; z-index:1000; top:14px; right:16px; width:18px; height:18px; border:2px solid #080b0c; border-radius:50%; background:#ffcf4f; box-shadow:0 0 0 3px #080b0cba,0 0 12px #ffcf4f99; }
+.connect-status[data-state="connected"] { background:#a6e95c; box-shadow:0 0 0 3px #080b0cba,0 0 12px #a6e95c99; }
+.connect-status[data-state="failed"] { background:#ff5868; box-shadow:0 0 0 3px #080b0cba,0 0 12px #ff586899; }
+.connect-status:focus-visible { outline:2px solid var(--white); outline-offset:5px; }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .tv-footer { display:grid; grid-template-columns:minmax(0,1fr) 154px 180px; width:100%; height:172px; background:#181b1e; border-top:1px solid #424849; }
 .queue { min-width:0; padding:9px 12px 10px; overflow:hidden; }
 .queue h2,.join h2 { margin:0 0 8px; color:var(--lime); font-size:13px; font-weight:bold; }

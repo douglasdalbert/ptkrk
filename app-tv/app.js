@@ -5,6 +5,7 @@ const video = document.querySelector("#video");
 const overlay = document.querySelector("#video-overlay");
 const playButton = document.querySelector("#play");
 const error = document.querySelector("#error");
+const connectionStatus = document.querySelector("#connect-status");
 let socket;
 let retryTimer;
 let activeId = null;
@@ -15,6 +16,12 @@ let colorIndex = 0;
 let party = null;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
 const confirmDialog = new ConfirmDialog();
+
+function setConnectionStatus(state, label) {
+  connectionStatus.dataset.state = state;
+  connectionStatus.title = label;
+  connectionStatus.querySelector(".sr-only").textContent = label;
+}
 
 async function command(path, options = {}) {
   const response = await fetch(path, {
@@ -111,16 +118,30 @@ setInterval(updateSkipClock, 250);
 function connect() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const current = new WebSocket(`${protocol}//${location.host}/ws/requests`);
+  let failed = false;
   socket = current;
   current.onopen = () => current.send(JSON.stringify({token: ""}));
   current.onmessage = event => {
-    document.querySelector("#connect-status").textContent = "CONECTADO";
+    failed = false;
+    setConnectionStatus("connected", "Conectado");
     render(JSON.parse(event.data));
+  };
+  current.onerror = () => {
+    if (socket !== current) return;
+    failed = true;
+    setConnectionStatus("failed", "Falha na conexão");
   };
   current.onclose = event => {
     if (socket !== current) return;
-    document.querySelector("#connect-status").textContent = "RECONECTANDO";
-    retryTimer = setTimeout(connect, 2000);
+    if (event.code === 1008) {
+      setConnectionStatus("failed", "Falha na conexão");
+      return;
+    }
+    if (!failed) setConnectionStatus("reconnecting", "Reconectando");
+    retryTimer = setTimeout(() => {
+      setConnectionStatus("reconnecting", "Reconectando");
+      connect();
+    }, 2000);
   };
 }
 
@@ -197,4 +218,7 @@ async function resetParty() {
 document.querySelector("#color-action").addEventListener("click", cycleColor);
 document.querySelector("#reset-action").addEventListener("click", resetParty);
 
-setup().catch(problem => { error.textContent = problem.message; });
+setup().catch(problem => {
+  setConnectionStatus("failed", "Falha na conexão");
+  error.textContent = problem.message;
+});
