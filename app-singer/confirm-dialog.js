@@ -16,8 +16,9 @@ export class ConfirmDialog {
     document.body.append(this.dialog);
   }
 
-  async open({ title, message, preview, confirmLabel = "Remover música", cancelLabel = "Cancelar", alert = false }) {
+  async open({ title, message, preview, confirmLabel = "Remover música", cancelLabel = "Cancelar", alert = false, onSubmit }) {
     const dialog = this.dialog;
+    const form = dialog.querySelector("form");
     const version = ++this.version;
     dialog.querySelector("h2").textContent = title;
     dialog.querySelector("p").textContent = message;
@@ -28,6 +29,18 @@ export class ConfirmDialog {
     image.hidden = true;
     image.removeAttribute("src");
     dialog.returnValue = "";
+    const submitHandler = async (event) => {
+      event.preventDefault();
+      const value = event.submitter?.value || "cancel";
+      if (onSubmit) {
+        const close = await onSubmit(value === "confirm");
+        if (close === false || !dialog.open) return;
+      }
+      dialog.close(value);
+    };
+    const closeHandler = () => form.removeEventListener("submit", submitHandler);
+    form.addEventListener("submit", submitHandler);
+    dialog.addEventListener("close", closeHandler, { once: true });
     dialog.showModal();
     if (preview) {
       Promise.resolve(preview).then((source) => {

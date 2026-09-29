@@ -34,9 +34,10 @@ let partySingers = [];
 let pendingGroupPrompt = null;
 let failureAlertActive = false;
 
-function connectionState(text, online = false) {
-  connectionLabel.textContent = text;
-  connectionLabel.classList.toggle("online", online);
+function connectionState(text, state = "connecting") {
+  connectionLabel.dataset.state = state;
+  connectionLabel.title = text;
+  connectionLabel.setAttribute("aria-label", text);
 }
 
 function showError(element, message) {
@@ -99,6 +100,8 @@ function clearSession() {
   document.querySelector("#entry-error").hidden = true;
   document.querySelector("#failure-alert").hidden = true;
   document.querySelector("#failure-alert").textContent = "";
+  document.querySelector("#sign-out").hidden = true;
+  document.querySelector("#identity-label").textContent = "/ CANTOR";
   localStorage.removeItem(storageKey);
   clearTimeout(reconnectTimer);
   socket?.close();
@@ -130,7 +133,8 @@ function showSession(identity) {
   currentParty = identity.party || null;
   entry.hidden = true;
   sessionView.hidden = false;
-  document.querySelector("#welcome").textContent = identity.name;
+  document.querySelector("#identity-label").textContent = `/ ${identity.name}`;
+  document.querySelector("#sign-out").hidden = false;
   connectionState("Conectando");
   connect();
 }
@@ -191,7 +195,7 @@ function connect() {
         localStorage.setItem(storageKey, JSON.stringify(singer));
       }
       reconnectDelay = 1000;
-      connectionState("Ao vivo", true);
+      connectionState("Conectado", "connected");
       latestItems = message.items;
       partySingers = message.singers || [];
       renderInvitation(message.invitation, message.items);
@@ -209,8 +213,11 @@ function connect() {
       partyEnded();
       return;
     }
-    connectionState("Reconectando");
-    reconnectTimer = setTimeout(connect, reconnectDelay);
+    connectionState("Falha na conexão", "failed");
+    reconnectTimer = setTimeout(() => {
+      connectionState("Reconectando");
+      connect();
+    }, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 15000);
   });
 }
@@ -428,24 +435,37 @@ function promptGroupInvite(invitation, items) {
   pendingGroupPrompt = item.id;
   const offer = async () => {
     if (groupDialog.open) groupDialog.close();
-    const accepted = await confirmDialog.open({
+    await confirmDialog.open({
       title: "Cantar em equipe?",
       message: `${item.singer_name} convidou você para cantar "${item.title || item.video_id}".`,
       confirmLabel: "Aceito",
       cancelLabel: "Recusar",
+      onSubmit: async (accepted) => {
+        if (currentInvitation?.request_id !== item.id) return true;
+        try {
+          await api(`/api/requests/${encodeURIComponent(item.id)}/invite/respond?accepted=${accepted}`, { method: "POST" });
+          const currentItem = latestItems.find(request => request.id === item.id);
+          const currentVocal = currentItem?.backvocals.find(member => member.singer_id === singer?.singer_id);
+          if (currentVocal) {
+            currentVocal.joined = accepted ? 1 : -1;
+            currentVocal.score_eligible = accepted && !currentInvitation.accepted;
+          }
+          return true;
+        } catch (problem) {
+          const newestVocal = latestItems.find(request => request.id === item.id)?.backvocals
+            .find(member => member.singer_id === singer?.singer_id);
+          if (problem.message.toLocaleLowerCase().includes("convite indisponível")) return true;
+          if (newestVocal?.joined !== 0) return true;
+          showError(document.querySelector("#request-message"), problem.message);
+          return false;
+        }
+      },
     });
     const currentItem = latestItems.find(request => request.id === item.id);
     const currentVocal = currentItem?.backvocals.find(member => member.singer_id === singer?.singer_id);
-    if (currentInvitation?.request_id !== item.id || currentVocal?.joined !== 0) return;
-    try {
-      await api(`/api/requests/${encodeURIComponent(item.id)}/invite/respond?accepted=${accepted}`, { method: "POST" });
-    } catch (problem) {
-      const newestVocal = latestItems.find(request => request.id === item.id)?.backvocals
-        .find(member => member.singer_id === singer?.singer_id);
-      if (newestVocal?.joined === 0) {
-        showError(document.querySelector("#request-message"), problem.message);
-        pendingGroupPrompt = null;
-      }
+    if (currentVocal?.joined !== 0) {
+      pendingGroupPrompt = null;
+      return;
     }
   };
   if (confirmDialog.dialog.open) {

@@ -11,13 +11,17 @@
   <body>
     <div class="shell">
       <header class="topbar">
-        <div class="wordmark"><span class="mark" aria-hidden="true">✳</span> KARAOKÊ <span class="wordmark-sub">/ CANTOR</span></div>
-        <span id="connection" class="connection" role="status">Conectando</span>
+        <div class="wordmark"><span class="mark" aria-hidden="true">✳</span><span class="wordmark-title">KARAOKÊ</span><span id="identity-label" class="wordmark-sub">/ CANTOR</span></div>
+        <div class="topbar-actions">
+          <span id="connection" class="connection" role="status" aria-label="Aguardando conexão" title="Aguardando conexão" data-state="connecting"></span>
+          <button id="sign-out" class="sign-out" type="button" aria-label="Trocar pessoa" title="Trocar pessoa" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+          </button>
+        </div>
       </header>
 
       <main class="scroll-content">
         <section id="entry" class="entry" aria-labelledby="entry-title">
-          <p class="eyebrow">AO VIVO · REDE LOCAL</p>
           <h1 id="entry-title">Entre na festa.</h1>
           <form id="entry-form" class="form-stack" novalidate>
             <label for="singer-name">Seu nome</label>
@@ -29,11 +33,6 @@
         </section>
 
         <section id="session" hidden>
-          <div class="session-header">
-            <div><p class="eyebrow">VOCÊ ESTÁ NA FESTA</p><h1 id="welcome"></h1></div>
-            <button id="sign-out" class="text-button" type="button">Trocar pessoa</button>
-          </div>
-
           <form id="request-form" class="request-form" novalidate>
             <label for="video-url">Peça uma música</label>
             <div class="request-row">

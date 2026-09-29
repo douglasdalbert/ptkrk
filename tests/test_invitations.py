@@ -76,8 +76,8 @@ class InvitationTests(unittest.TestCase):
             self.assertFalse(finish_song(database, "A1", 151))
             self.assertEqual(self.order(database), ["B1", "C1", "A2"])
             self.assertEqual(invitation_state(database)["request_id"], "B1")
-            self.assertNotIn("A1", [item["id"] for item in party_snapshot()["items"]])
             self.assertEqual(database.execute("SELECT status FROM requests WHERE id='A1'").fetchone()[0], "played")
+        self.assertNotIn("A1", [item["id"] for item in party_snapshot()["items"]])
 
     def test_only_owner_can_accept_once_without_auto_deadline(self):
         with connection() as database:
@@ -125,6 +125,19 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(vocal["joined"], 1)
             self.assertEqual(vocal["score_eligible"], 0)
             self.assertTrue(invitation_state(database)["accepted"])
+
+    def test_group_invite_decline_after_start_publishes_declined_state(self):
+        with connection() as database:
+            start_invitation(database, 100)
+        invite_guest("A1", "B", "A")
+        accept_request("A1", "A")
+        self.assertTrue(party_snapshot()["invitation"]["accepted"])
+        self.assertEqual(respond_to_invite("A1", False, "B")["status"], "declined")
+        snapshot = party_snapshot()
+        vocal = next(vocal for vocal in snapshot["items"][0]["backvocals"] if vocal["singer_id"] == "B")
+        self.assertEqual(vocal["joined"], -1)
+        self.assertFalse(vocal["accepted"])
+        self.assertTrue(snapshot["invitation"]["accepted"])
 
     def test_lead_and_backvocals_start_one_performance_after_everyone_accepts(self):
         with connection() as database:
