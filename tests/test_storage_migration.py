@@ -45,6 +45,7 @@ class SingerMigrationTests(unittest.TestCase):
                     self.assertEqual(tuple(singer), ("singer-1", "saved-token-hash"))
                     self.assertEqual(request[0], singer[0])
                     self.assertEqual(tuple(count), (singer[0], 3))
+                    self.assertEqual(database.execute("SELECT COUNT(*) FROM backvocals").fetchone()[0], 0)
                     self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
                     self.assertIsNone(database.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' AND name='clients'"

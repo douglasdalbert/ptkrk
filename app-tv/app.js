@@ -83,7 +83,8 @@ function render(snapshot) {
   status.textContent = current ? (current.status === "ready" ? "PRÓXIMA MÚSICA" : "PREPARANDO") :
     next ? "AGUARDANDO CANTOR" : items.length ? "PREPARANDO MÚSICAS" : "AGUARDANDO MÚSICAS";
   document.querySelector("#next-title").textContent = next?.title || (next ? next.video_id : "A festa começa aqui.");
-  document.querySelector("#next-singer").textContent = next?.singer_name || "";
+  document.querySelector("#next-singer").textContent = next ?
+    [next.singer_name, ...next.backvocals.map(vocal => vocal.singer_name)].join(" + ") : "";
   const preview = document.querySelector("#next-preview");
   preview.hidden = !next || next.status !== "ready";
   preview.onerror = () => { preview.hidden = true; };
@@ -103,7 +104,7 @@ function render(snapshot) {
     const name = document.createElement("strong");
     name.textContent = item.title || item.video_id;
     const singer = document.createElement("small");
-    singer.textContent = item.singer_name;
+    singer.textContent = [item.singer_name, ...item.backvocals.filter(vocal => vocal.joined === 1).map(vocal => vocal.singer_name)].join(" + ");
     text.append(name, singer);
     article.append(text);
     return article;

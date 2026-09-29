@@ -67,7 +67,10 @@
             <span id="invitation-song"></span>
           </div>
           <p id="invitation-message" role="status"></p>
-          <button id="accept-button" class="footer-button accept-button" type="button">OK, vou cantar</button>
+          <div class="sing-actions">
+            <button id="accept-button" class="footer-button accept-button" type="button">OK, vou cantar</button>
+            <button id="group-button" class="footer-button group-button" type="button" hidden>Cantar com outros</button>
+          </div>
         </section>
         <div id="skip-action" class="skip-action" hidden>
           <p id="skip-message" role="status"></p>
@@ -75,5 +78,14 @@
         </div>
       </div>
     </footer>
+    <dialog id="group-dialog" class="confirm-dialog group-dialog" aria-labelledby="group-title">
+      <h2 id="group-title">Cantar com outros</h2>
+      <div id="group-list" class="group-list"></div>
+      <p id="group-message" role="status"></p>
+      <div class="group-actions">
+        <button id="group-close" class="text-button" type="button">Fechar</button>
+        <button id="group-start" class="primary" type="button">Cantar em equipe</button>
+      </div>
+    </dialog>
   </body>
 </html>

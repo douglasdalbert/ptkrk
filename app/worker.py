@@ -37,14 +37,15 @@ def process_next() -> bool:
     try:
         title = download_video(item["video_id"], generation)
         create_preview(item["video_id"], generation)
-    except Exception:
+    except Exception as error:
         logger.exception("Falha ao preparar vídeo %s", item["video_id"])
+        reason = str(error) if isinstance(error, ValueError) else "Não foi possível baixar/preparar este vídeo"
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             updated = database.execute(
                 "UPDATE requests SET status = 'failed', error = ? WHERE id = ? AND status = 'processing' "
                 "AND ? = (SELECT generation FROM party WHERE id=1)",
-                ("Não foi possível baixar/preparar este vídeo", item["id"], generation),
+                (reason[:200], item["id"], generation),
             )
             if updated.rowcount:
                 database.execute("DELETE FROM ready_queue WHERE request_id = ?", (item["id"],))

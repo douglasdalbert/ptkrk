@@ -6,7 +6,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
-from app.main import accept_request, party_snapshot, remove_request, skip_request
+from app.main import accept_request, invite_guest, party_snapshot, remove_request, respond_to_invite, skip_request
 from app.queue import enqueue_request
 from app.storage import connection, initialize
 
@@ -86,6 +86,61 @@ class InvitationTests(unittest.TestCase):
             self.assertFalse(accept_invitation(database, "A1", "A", 200))
             self.assertTrue(invitation_state(database)["accepted"])
             self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE singer_id = 'A'").fetchone()[0], 1)
+
+    def test_group_invites_show_decline_and_join_before_shared_start(self):
+        with connection() as database:
+            start_invitation(database, 100)
+        with self.assertRaises(HTTPException):
+            invite_guest("A1", "C", "B")
+        self.assertEqual(invite_guest("A1", "B", "A")["status"], "pending")
+        self.assertEqual(invite_guest("A1", "C", "A")["status"], "pending")
+        with self.assertRaises(HTTPException):
+            invite_guest("A1", "B", "A")
+        self.assertEqual(respond_to_invite("A1", False, "C")["status"], "declined")
+        self.assertEqual(respond_to_invite("A1", True, "B")["status"], "accepted")
+        with self.assertRaises(HTTPException):
+            respond_to_invite("A1", True, "C")
+        snapshot = party_snapshot()
+        vocals = {vocal["singer_id"]: vocal["joined"] for vocal in snapshot["items"][0]["backvocals"]}
+        self.assertEqual(vocals, {"B": 1, "C": -1})
+        self.assertEqual(len(snapshot["singers"]), 3)
+        self.assertFalse(snapshot["invitation"]["accepted"])
+        self.assertEqual(accept_request("A1", "A")["status"], "accepted")
+        self.assertFalse(party_snapshot()["invitation"]["accepted"])
+        self.assertEqual(accept_request("A1", "B")["status"], "accepted")
+        self.assertTrue(party_snapshot()["invitation"]["accepted"])
+
+    def test_open_group_invite_can_join_after_start_without_score_eligibility(self):
+        with connection() as database:
+            start_invitation(database, 100)
+        invite_guest("A1", "B", "A")
+        accept_request("A1", "A")
+        self.assertTrue(party_snapshot()["invitation"]["accepted"])
+        self.assertEqual(respond_to_invite("A1", True, "B")["status"], "accepted")
+        with connection() as database:
+            vocal = database.execute(
+                "SELECT joined, score_eligible FROM backvocals WHERE request_id = 'A1' AND singer_id = 'B'",
+            ).fetchone()
+            self.assertEqual(vocal["joined"], 1)
+            self.assertEqual(vocal["score_eligible"], 0)
+            self.assertTrue(invitation_state(database)["accepted"])
+
+    def test_lead_and_backvocals_start_one_performance_after_everyone_accepts(self):
+        with connection() as database:
+            database.execute("INSERT INTO backvocals(request_id, singer_id) VALUES ('A1', 'B'), ('A1', 'C')")
+            start_invitation(database, 100)
+            self.assertTrue(accept_invitation(database, "A1", "C", 101))
+            self.assertFalse(invitation_state(database)["accepted"])
+            self.assertTrue(accept_invitation(database, "A1", "A", 102))
+            self.assertFalse(invitation_state(database)["accepted"])
+            self.assertFalse(accept_invitation(database, "A1", "C", 103))
+            self.assertTrue(accept_invitation(database, "A1", "B", 104))
+            self.assertTrue(invitation_state(database)["accepted"])
+            self.assertEqual({row["singer_id"]: row["total"] for row in database.execute(
+                "SELECT singer_id, total FROM accepted_counts"
+            )}, {"A": 1, "B": 1, "C": 1})
+            self.assertTrue(finish_song(database, "A1", 150))
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM requests WHERE id = 'A1'").fetchone()[0], 1)
 
     def test_no_invitation_is_started_without_explicit_activation(self):
         with connection() as database:

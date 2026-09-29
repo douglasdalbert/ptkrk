@@ -3,10 +3,11 @@ import subprocess
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 MEDIA_ROOT = Path(os.environ.get("KARAOKE_MEDIA_PATH", "/media"))
 MAX_DURATION_SECONDS = 12 * 60
-MAX_FILE_BYTES = 300 * 1024 * 1024
+MAX_FILE_BYTES = 500 * 1024 * 1024
 
 
 def download_video(video_id: str, generation: str | None = None) -> str:
@@ -20,7 +21,7 @@ def download_video(video_id: str, generation: str | None = None) -> str:
         "quiet": True,
         "no_warnings": True,
         "socket_timeout": 20,
-        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
+        "format": "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]",
         "merge_output_format": "mp4",
         "outtmpl": str(directory / f"{video_id}.%(ext)s"),
         "max_filesize": MAX_FILE_BYTES,
@@ -37,19 +38,25 @@ def download_video(video_id: str, generation: str | None = None) -> str:
                 raise ValueError("Vídeo ao vivo ou com mais de 12 minutos não é aceito")
             if not cached:
                 downloader.download([url])
-        if not target.is_file() or target.stat().st_size > MAX_FILE_BYTES:
-            raise ValueError("Vídeo não foi preparado em MP4 dentro do limite de 300 MB")
+        if not target.is_file():
+            raise ValueError("Não foi possível preparar o vídeo em MP4")
+        if target.stat().st_size > MAX_FILE_BYTES:
+            raise ValueError("Vídeo excede o limite de 500 MB")
         return str(metadata.get("title") or video_id)[:200]
-    except Exception:
+    except Exception as error:
         for path in directory.glob(f"{video_id}.*"):
             if path.is_file() and (not cached or path != target):
                 path.unlink()
+        if isinstance(error, DownloadError):
+            if "video is unavailable" in str(error).lower():
+                raise ValueError("Vídeo indisponível no YouTube") from error
+            raise ValueError("YouTube não disponibilizou uma versão compatível deste vídeo") from error
         raise
 
 
 def check_size(progress: dict) -> None:
     if progress.get("downloaded_bytes", 0) > MAX_FILE_BYTES:
-        raise ValueError("Vídeo ultrapassou 300 MB")
+        raise ValueError("Vídeo excede o limite de 500 MB")
 
 
 def create_preview(video_id: str, generation: str | None = None) -> None:

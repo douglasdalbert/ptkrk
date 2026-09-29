@@ -117,7 +117,16 @@ def request_snapshot() -> list[dict]:
                      THEN 0 ELSE 1 END,
                    ready_queue.position, requests.created_at, requests.rowid"""
         ).fetchall()
-    return [dict(row) for row in rows]
+        items = [dict(row) for row in rows]
+        for item in items:
+            item["backvocals"] = [dict(backvocal) for backvocal in database.execute(
+                """SELECT backvocals.singer_id, singers.name AS singer_name, backvocals.accepted,
+                          backvocals.joined, backvocals.score_eligible
+                   FROM backvocals JOIN singers ON singers.id = backvocals.singer_id
+                   WHERE backvocals.request_id = ? ORDER BY backvocals.rowid""",
+                (item["id"],),
+            )]
+    return items
 
 
 def party_snapshot() -> dict:
@@ -125,8 +134,9 @@ def party_snapshot() -> dict:
         invitation = invitation_state(database)
         skipping = skip_state(database)
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
     return {"type": "requests", "items": request_snapshot(), "invitation": invitation,
-            "skip": skipping, "allow_skip": skip_enabled(), "party": generation}
+            "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers}
 
 
 def skip_enabled() -> bool:
@@ -310,6 +320,27 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
     request_id = str(uuid4())
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
+        existing = database.execute(
+            """SELECT id, singer_id, status FROM requests WHERE video_id = ?
+               AND status IN ('pending', 'processing', 'ready') ORDER BY created_at, rowid LIMIT 1""",
+            (video_id,),
+        ).fetchone()
+        if existing:
+            if singer_id == existing["singer_id"] or database.execute(
+                "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ?",
+                (existing["id"], singer_id),
+            ).fetchone():
+                raise HTTPException(409, "Você já está nesta música")
+            invited = invitation_state(database)
+            if invited and invited["request_id"] == existing["id"] and (
+                invited["accepted"] or invited["lead_accepted"] or
+                database.execute("SELECT 1 FROM backvocals WHERE request_id = ? AND accepted = 1",
+                                 (existing["id"],)).fetchone()
+            ):
+                raise HTTPException(409, "A música já foi aceita para apresentação")
+            database.execute("INSERT INTO backvocals(request_id, singer_id) VALUES (?, ?)",
+                             (existing["id"], singer_id))
+            return {"id": existing["id"], "status": existing["status"], "video_id": video_id}
         database.execute(
             "INSERT INTO requests (id, singer_id, video_id) VALUES (?, ?, ?)",
             (request_id, singer_id, video_id),
@@ -321,6 +352,44 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
 @app.get("/api/requests")
 def list_requests(singer_id: str = Depends(authenticated_singer)) -> list[dict]:
     return request_snapshot()
+
+
+@app.post("/api/requests/{request_id}/invite/{guest_id}", status_code=202)
+def invite_guest(request_id: str, guest_id: str, singer_id: str = Depends(authenticated_singer)) -> dict:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        request = database.execute("SELECT singer_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
+        invitation = invitation_state(database)
+        if (not request or request["singer_id"] != singer_id or request["status"] != "ready"
+                or not invitation or invitation["request_id"] != request_id or invitation["accepted"]
+                or invitation["lead_accepted"] or skip_state(database)):
+            raise HTTPException(409, "Convite indisponível")
+        if guest_id == singer_id or not database.execute("SELECT 1 FROM singers WHERE id = ?", (guest_id,)).fetchone():
+            raise HTTPException(404, "Pessoa não encontrada")
+        if database.execute("SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ?", (request_id, guest_id)).fetchone():
+            raise HTTPException(409, "Pessoa já convidada")
+        database.execute("INSERT INTO backvocals(request_id, singer_id, joined) VALUES (?, ?, 0)", (request_id, guest_id))
+    return {"status": "pending"}
+
+
+@app.post("/api/requests/{request_id}/invite/respond")
+def respond_to_invite(request_id: str, accepted: bool, singer_id: str = Depends(authenticated_singer)) -> dict:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        invitation = invitation_state(database)
+        if not invitation or invitation["request_id"] != request_id or skip_state(database):
+            raise HTTPException(409, "Convite indisponível")
+        result = database.execute(
+            "UPDATE backvocals SET joined = ?, score_eligible = ? WHERE request_id = ? AND singer_id = ? AND joined = 0",
+            (1 if accepted else -1, int(accepted and not invitation["accepted"]), request_id, singer_id),
+        )
+        if not result.rowcount:
+            raise HTTPException(409, "Convite já respondido")
+        if invitation["lead_accepted"] and not database.execute(
+            "SELECT 1 FROM backvocals WHERE request_id = ? AND joined >= 0 AND accepted = 0", (request_id,),
+        ).fetchone():
+            database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
+    return {"status": "accepted" if accepted else "declined"}
 
 
 @app.post("/api/requests/{request_id}/accept")
@@ -350,15 +419,28 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         request = database.execute(
-            "SELECT status FROM requests WHERE id = ? AND singer_id = ?", (request_id, singer_id)
+            "SELECT status, singer_id FROM requests WHERE id = ?", (request_id,)
         ).fetchone()
         if request is None or request["status"] == "removed":
             raise HTTPException(404, "Pedido não encontrado")
         invite = invitation_state(database)
+        backvocal = database.execute(
+            "SELECT accepted FROM backvocals WHERE request_id = ? AND singer_id = ?", (request_id, singer_id)
+        ).fetchone()
+        if request["singer_id"] != singer_id and backvocal is None:
+            raise HTTPException(404, "Pedido não encontrado")
+        invited = invite and invite["request_id"] == request_id
         if request["status"] not in ("pending", "processing", "ready", "failed") or (
-            invite and invite["request_id"] == request_id and invite["accepted"]
+            invited and (invite["accepted"] or (backvocal["accepted"] if backvocal else invite["lead_accepted"]))
         ):
             raise HTTPException(409, "Não é possível remover uma música já aceita")
+        if backvocal is not None:
+            database.execute("DELETE FROM backvocals WHERE request_id = ? AND singer_id = ?", (request_id, singer_id))
+            if invited and invite["lead_accepted"] and not database.execute(
+                "SELECT 1 FROM backvocals WHERE request_id = ? AND joined = 1 AND accepted = 0 LIMIT 1", (request_id,)
+            ).fetchone():
+                database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
+            return
         database.execute("UPDATE requests SET status = 'removed' WHERE id = ?", (request_id,))
         database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
         rows = database.execute("SELECT request_id FROM ready_queue ORDER BY position").fetchall()

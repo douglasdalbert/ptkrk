@@ -27,6 +27,21 @@ button:disabled { opacity: .55; cursor: wait; }
 .footer-button { display: block; width: 100%; height: 48px; border: 0; border-radius: 0; font-size: 14px; font-weight: 800; }
 .footer-button:disabled { cursor: default; }
 .accept-button { background: var(--lime); color: #171b0c; }
+.sing-actions { display: flex; height: 48px; gap: 6px; }
+.sing-actions .accept-button { flex: 1; min-width: 0; }
+.group-button { flex: none; width: auto; padding: 0 10px; white-space: nowrap; background: var(--cyan); color: #0a2522; font-size: 12px; }
+.group-dialog { width: min(420px, calc(100% - 32px)); }
+.group-list { display: grid; max-height: 55dvh; overflow-y: auto; }
+.group-person { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; width: 100%; padding: 8px 4px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; }
+.group-person span:first-child { overflow-wrap: anywhere; }
+.group-person .response { flex: none; width: 22px; text-align: center; font-weight: 900; }
+.group-person .response.pending { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--cyan); border-radius: 50%; animation: processing-spin .8s linear infinite; }
+.group-person .response.joined { color: var(--lime); }
+.group-person .response.declined { color: var(--danger); }
+.group-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+.group-actions .primary { min-height: 42px; padding-inline: 12px; }
+.group-dialog #group-message:empty { display: none; }
+.group-dialog #group-message { margin: 10px 0 0; font-size: 12px; }
 .skip-button { background: var(--panel); color: var(--pink); }
 .wordmark { font-weight: 900; font-size: 17px; white-space: nowrap; }
 .wordmark-sub { color: var(--muted); font-size: 11px; font-weight: 700; }

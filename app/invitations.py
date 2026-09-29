@@ -5,10 +5,14 @@ SKIP_SECONDS = 5
 
 def invitation_state(database: sqlite3.Connection) -> dict | None:
     row = database.execute(
-        "SELECT request_id, deadline, accepted FROM invitation WHERE id = 1"
+        "SELECT request_id, deadline, accepted, lead_accepted FROM invitation WHERE id = 1"
     ).fetchone()
     return {"request_id": row["request_id"], "deadline_ms": round(row["deadline"] * 1000),
-            "accepted": bool(row["accepted"])} if row else None
+            "accepted": bool(row["accepted"]), "lead_accepted": bool(row["lead_accepted"]),
+            "backvocals": [dict(vocal) for vocal in database.execute(
+                "SELECT singer_id, accepted, joined, score_eligible FROM backvocals WHERE request_id = ? ORDER BY rowid",
+                (row["request_id"],),
+            )]} if row else None
 
 
 def start_invitation(database: sqlite3.Connection, now: float, exclude_request_id: str | None = None) -> dict | None:
@@ -86,9 +90,24 @@ def accept_invitation(database: sqlite3.Connection, request_id: str, singer_id: 
     if skip_state(database):
         return False
     owner = database.execute("SELECT singer_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
-    if owner is None or owner["singer_id"] != singer_id or owner["status"] != "ready":
+    if owner is None or owner["status"] != "ready":
         return False
-    database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
+    if owner["singer_id"] == singer_id:
+        if current["lead_accepted"]:
+            return False
+        database.execute("UPDATE invitation SET lead_accepted = 1 WHERE id = 1")
+    else:
+        accepted = database.execute(
+            "UPDATE backvocals SET accepted = 1 WHERE request_id = ? AND singer_id = ? AND accepted = 0 AND joined = 1",
+            (request_id, singer_id),
+        )
+        if not accepted.rowcount:
+            return False
+    ready = database.execute("SELECT lead_accepted FROM invitation WHERE id = 1").fetchone()[0]
+    if ready and not database.execute(
+        "SELECT 1 FROM backvocals WHERE request_id = ? AND joined = 1 AND accepted = 0 LIMIT 1", (request_id,),
+    ).fetchone():
+        database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
     database.execute(
           """INSERT INTO accepted_counts(singer_id, total) VALUES (?, 1)
               ON CONFLICT(singer_id) DO UPDATE SET total = total + 1""",

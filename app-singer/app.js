@@ -8,8 +8,13 @@ const entryForm = document.querySelector("#entry-form");
 const requestForm = document.querySelector("#request-form");
 const requestList = document.querySelector("#request-list");
 const previewCache = new Map();
+const acknowledgedFailures = new Set();
 const invitationView = document.querySelector("#invitation");
 const acceptButton = document.querySelector("#accept-button");
+const groupButton = document.querySelector("#group-button");
+const groupDialog = document.querySelector("#group-dialog");
+const groupList = document.querySelector("#group-list");
+const groupStart = document.querySelector("#group-start");
 const confirmDialog = new ConfirmDialog();
 const skippingView = document.querySelector("#skipping");
 const actionFooter = document.querySelector("#action-footer");
@@ -24,6 +29,11 @@ let currentInvitation = null;
 let currentSkip = null;
 let currentSong = null;
 let allowSkip = false;
+let latestItems = [];
+let partySingers = [];
+let pendingGroupPrompt = null;
+let failureAlertActive = false;
+let waitingForDialog = false;
 
 function connectionState(text, online = false) {
   connectionLabel.textContent = text;
@@ -66,12 +76,18 @@ function youtubeCode(input) {
 }
 
 function clearSession() {
+  if (confirmDialog.dialog.open) confirmDialog.dialog.close();
+  if (groupDialog.open) groupDialog.close();
   singer = null;
   currentParty = null;
   currentInvitation = null;
   currentSkip = null;
   currentSong = null;
   allowSkip = false;
+  latestItems = [];
+  partySingers = [];
+  pendingGroupPrompt = null;
+  acknowledgedFailures.clear();
   invitationView.hidden = true;
   skippingView.hidden = true;
   skipAction.hidden = true;
@@ -175,9 +191,14 @@ function connect() {
       }
       reconnectDelay = 1000;
       connectionState("Ao vivo", true);
+      latestItems = message.items;
+      partySingers = message.singers || [];
       renderInvitation(message.invitation, message.items);
+      renderGroupList();
+      promptGroupInvite(message.invitation, message.items);
       renderRequests(message.items);
       renderSkip(message);
+      showFailedRequest(message.items);
     }
   });
   current.addEventListener("close", (event) => {
@@ -222,11 +243,14 @@ function previewFor(item, placeholder) {
 }
 
 function renderRequests(items) {
-  document.querySelector("#request-count").textContent = String(items.length);
-  document.querySelector("#empty").hidden = items.length !== 0;
+  const visibleItems = items.filter(item => item.status !== "failed" ||
+    ((item.singer_id === singer?.singer_id || item.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.joined === 1)) &&
+      !acknowledgedFailures.has(item.id)));
+  document.querySelector("#request-count").textContent = String(visibleItems.length);
+  document.querySelector("#empty").hidden = visibleItems.length !== 0;
   const statuses = { pending: "Em fila", processing: "Processando", ready: "Pronto", failed: "Falhou" };
   const content = document.createDocumentFragment();
-  for (const item of items) {
+  for (const item of visibleItems) {
     const row = document.createElement("li");
     row.className = "request-item";
     const placeholder = document.createElement("span");
@@ -238,7 +262,7 @@ function renderRequests(items) {
     const title = document.createElement("strong");
     title.textContent = item.title || `youtube.com/watch?v=${item.video_id}`;
     const singerName = document.createElement("small");
-    singerName.textContent = item.singer_name;
+    singerName.textContent = [item.singer_name, ...item.backvocals.filter(vocal => vocal.joined === 1).map(vocal => vocal.singer_name)].join(" + ");
     details.append(title, singerName);
     const status = document.createElement("span");
     status.className = `status ${item.status}`;
@@ -256,8 +280,12 @@ function renderRequests(items) {
       status.prepend(position);
     }
     row.append(placeholder, details, status);
-    if (singer && item.singer_id === singer.singer_id &&
-        !(currentInvitation?.request_id === item.id && currentInvitation.accepted)) {
+    const mine = singer && (item.singer_id === singer.singer_id ||
+      item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
+    const acceptedMine = currentInvitation?.request_id === item.id &&
+      (item.singer_id === singer?.singer_id ? currentInvitation.lead_accepted :
+        currentInvitation.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.accepted));
+    if (mine && !acceptedMine) {
       const remove = document.createElement("button");
       remove.className = "remove-button";
       remove.type = "button";
@@ -268,8 +296,9 @@ function renderRequests(items) {
         const cached = previewCache.get(item.video_id);
         const preview = cached?.task?.then(() => cached.url);
         const confirmed = await confirmDialog.open({
-          title: "Remover música?",
-          message: `Quer remover "${title.textContent}"?`,
+          title: item.singer_id === singer.singer_id ? "Remover música?" : "Sair do grupo?",
+          message: item.singer_id === singer.singer_id ? `Quer remover "${title.textContent}"?` :
+            `Quer deixar de cantar "${title.textContent}"? A música continua para os demais.`,
           preview,
         });
         if (!confirmed) return;
@@ -288,8 +317,51 @@ function renderRequests(items) {
   requestList.replaceChildren(content);
 }
 
+function showFailedRequest(items) {
+  latestItems = items;
+  if (!singer || failureAlertActive) return;
+  const failed = items.find(item => item.status === "failed" &&
+    (item.singer_id === singer.singer_id || item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1)) &&
+    !acknowledgedFailures.has(item.id));
+  if (!failed) return;
+  if (confirmDialog.dialog.open) {
+    if (!waitingForDialog) {
+      waitingForDialog = true;
+      confirmDialog.dialog.addEventListener("close", () => {
+        waitingForDialog = false;
+        showFailedRequest(latestItems);
+      }, { once: true });
+    }
+    return;
+  }
+  const owner = singer;
+  failureAlertActive = true;
+  (async () => {
+    try {
+      await confirmDialog.open({
+        title: "Não foi possível preparar a música",
+        message: `"${failed.title || `youtube.com/watch?v=${failed.video_id}}": ${failed.error || "O vídeo não pôde ser preparado."}`,
+        confirmLabel: "Entendi",
+        alert: true,
+      });
+      if (singer !== owner) return;
+      acknowledgedFailures.add(failed.id);
+      renderRequests(latestItems);
+      if (failed.singer_id === singer.singer_id) {
+        await api(`/api/requests/${encodeURIComponent(failed.id)}`, { method: "DELETE" });
+      }
+    } catch (problem) {
+      if (singer === owner) showError(document.querySelector("#request-message"), problem.message);
+    } finally {
+      failureAlertActive = false;
+      if (singer === owner) showFailedRequest(latestItems);
+    }
+  })();
+}
+
 function renderInvitation(invitation, items) {
-  if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id && item.singer_id === singer.singer_id)) {
+  if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id &&
+    (item.singer_id === singer.singer_id || item.backvocals.some(vocal => vocal.singer_id === singer.singer_id)))) {
     currentInvitation = null;
     invitationView.hidden = true;
     updateFooter();
@@ -297,17 +369,119 @@ function renderInvitation(invitation, items) {
   }
   const isNew = currentInvitation?.request_id !== invitation.request_id;
   currentInvitation = invitation;
-  invitationView.hidden = invitation.accepted;
   const item = items.find((request) => request.id === invitation.request_id);
+  const myVocal = item.backvocals.find(vocal => vocal.singer_id === singer.singer_id);
+  const acceptedMine = item.singer_id === singer.singer_id ? invitation.lead_accepted :
+    myVocal && (myVocal.accepted || (invitation.accepted && myVocal.joined === 1 && !myVocal.score_eligible));
+  const lateJoin = invitation.accepted && myVocal?.joined === 1 && !myVocal.score_eligible;
+  invitationView.hidden = (acceptedMine && !lateJoin) || (myVocal && myVocal.joined !== 1);
   document.querySelector("#invitation-song").textContent = item.title || item.video_id;
-  acceptButton.hidden = invitation.accepted;
+  acceptButton.hidden = acceptedMine;
+  groupButton.hidden = item.singer_id !== singer.singer_id || acceptedMine || !!currentSkip;
   acceptButton.disabled = false;
   const invitationMessage = document.querySelector("#invitation-message");
   clearError(invitationMessage);
-  invitationMessage.textContent = invitation.accepted ? "Confirmado. Aguarde a TV." : "";
+  invitationMessage.textContent = lateJoin ? "Você entrou depois do início e não participa da pontuação desta música." :
+    acceptedMine ? "Confirmado. Aguarde os demais cantores." : "";
   updateFooter();
-  if (isNew && !invitation.accepted && "vibrate" in navigator) navigator.vibrate([250, 150, 250]);
+  if (isNew && !acceptedMine && "vibrate" in navigator) navigator.vibrate([250, 150, 250]);
 }
+
+function renderGroupList() {
+  if (!groupDialog.open || !currentInvitation || !singer) return;
+  const item = latestItems.find(request => request.id === currentInvitation.request_id);
+  if (!item) { groupDialog.close(); return; }
+  const content = document.createDocumentFragment();
+  for (const person of partySingers.filter(person => person.id !== singer.singer_id)) {
+    const vocal = item.backvocals.find(vocal => vocal.singer_id === person.id);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "group-person";
+    button.disabled = !!vocal || !!currentInvitation.lead_accepted;
+    const name = document.createElement("span");
+    name.textContent = person.name;
+    const response = document.createElement("span");
+    response.className = "response";
+    if (vocal) {
+      response.classList.add(vocal.joined === 1 ? "joined" : vocal.joined === 0 ? "pending" : "declined");
+      response.textContent = vocal.joined === 1 ? "✓" : vocal.joined < 0 ? "×" : "";
+      const responseLabel = vocal.joined === 1 && !vocal.score_eligible ? "aceitou após o início; fora da pontuação" :
+        vocal.joined === 1 ? "aceitou" : vocal.joined === -1 ? "recusou" : "aguardando resposta";
+      button.setAttribute("aria-label", `${person.name}: ${responseLabel}`);
+    } else {
+      response.textContent = "+";
+      button.setAttribute("aria-label", `Convidar ${person.name}`);
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await api(`/api/requests/${encodeURIComponent(item.id)}/invite/${encodeURIComponent(person.id)}`, { method: "POST" });
+          response.textContent = "";
+          response.classList.add("pending");
+        } catch (problem) {
+          showError(document.querySelector("#group-message"), problem.message);
+          button.disabled = false;
+        }
+      });
+    }
+    button.append(name, response);
+    content.append(button);
+  }
+  groupList.replaceChildren(content);
+  if (!groupList.childNodes.length) groupList.textContent = "Nenhuma outra pessoa na festa.";
+  groupStart.disabled = !!currentInvitation.lead_accepted || !!currentSkip;
+}
+
+function promptGroupInvite(invitation, items) {
+  if (!singer || !invitation) return;
+  const item = items.find(request => request.id === invitation.request_id);
+  const vocal = item?.backvocals.find(member => member.singer_id === singer.singer_id && member.joined === 0);
+  if (!vocal || pendingGroupPrompt === item.id) return;
+  pendingGroupPrompt = item.id;
+  const offer = async () => {
+    if (groupDialog.open) groupDialog.close();
+    const accepted = await confirmDialog.open({
+      title: "Cantar em equipe?",
+      message: `${item.singer_name} convidou você para cantar "${item.title || item.video_id}".`,
+      confirmLabel: "Aceito",
+      cancelLabel: "Recusar",
+    });
+    const currentItem = latestItems.find(request => request.id === item.id);
+    const currentVocal = currentItem?.backvocals.find(member => member.singer_id === singer?.singer_id);
+    if (currentInvitation?.request_id !== item.id || currentVocal?.joined !== 0) return;
+    try {
+      await api(`/api/requests/${encodeURIComponent(item.id)}/invite/respond?accepted=${accepted}`, { method: "POST" });
+    } catch (problem) {
+      const newestVocal = latestItems.find(request => request.id === item.id)?.backvocals
+        .find(member => member.singer_id === singer?.singer_id);
+      if (newestVocal?.joined === 0) {
+        showError(document.querySelector("#request-message"), problem.message);
+        pendingGroupPrompt = null;
+      }
+    }
+  };
+  if (confirmDialog.dialog.open) {
+    confirmDialog.dialog.addEventListener("close", offer, { once: true });
+  } else {
+    offer();
+  }
+}
+
+groupButton.addEventListener("click", () => {
+  document.querySelector("#group-message").textContent = "";
+  groupDialog.showModal();
+  renderGroupList();
+});
+document.querySelector("#group-close").addEventListener("click", () => groupDialog.close());
+groupStart.addEventListener("click", async () => {
+  groupStart.disabled = true;
+  try {
+    await api(`/api/requests/${encodeURIComponent(currentInvitation.request_id)}/accept`, { method: "POST" });
+    groupDialog.close();
+  } catch (problem) {
+    showError(document.querySelector("#group-message"), problem.message);
+    groupStart.disabled = false;
+  }
+});
 
 function renderSkip(message) {
   currentSkip = message.skip;

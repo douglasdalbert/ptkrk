@@ -52,6 +52,12 @@ def initialize() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS requests_status_idx ON requests(status, created_at);
+            CREATE TABLE IF NOT EXISTS backvocals (
+                request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                accepted INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (request_id, singer_id)
+            );
             CREATE TABLE IF NOT EXISTS ready_queue (
                 request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
                 position INTEGER NOT NULL
@@ -82,6 +88,13 @@ def initialize() -> None:
             """
         )
         database.execute("BEGIN IMMEDIATE")
+        if "lead_accepted" not in {row[1] for row in database.execute("PRAGMA table_info(invitation)")}:
+            database.execute("ALTER TABLE invitation ADD COLUMN lead_accepted INTEGER NOT NULL DEFAULT 0")
+            database.execute("UPDATE invitation SET lead_accepted = accepted")
+        if "joined" not in {row[1] for row in database.execute("PRAGMA table_info(backvocals)")}:
+            database.execute("ALTER TABLE backvocals ADD COLUMN joined INTEGER NOT NULL DEFAULT 1")
+        if "score_eligible" not in {row[1] for row in database.execute("PRAGMA table_info(backvocals)")}:
+            database.execute("ALTER TABLE backvocals ADD COLUMN score_eligible INTEGER NOT NULL DEFAULT 1")
         database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         for category in ("videos", "previews"):

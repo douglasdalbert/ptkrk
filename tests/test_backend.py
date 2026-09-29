@@ -103,6 +103,28 @@ class WorkerTests(unittest.TestCase):
             row = database.execute("SELECT video_id FROM requests WHERE id = ?", (created["id"],)).fetchone()
         self.assertEqual(row["video_id"], "glvVYIhdWlU")
 
+    def test_backvocals_share_one_video_and_one_queue_position(self):
+        for singer_id in ("B", "C"):
+            with connection() as database:
+                database.execute("INSERT INTO singers(id,name,session_hash) VALUES (?,?,?)",
+                                 (singer_id, singer_id, singer_id))
+        first = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "singer")
+        second = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "B")
+        third = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "C")
+        self.assertEqual({first["id"], second["id"], third["id"]}, {first["id"]})
+        with connection() as database:
+            self.assertEqual(database.execute(
+                "SELECT COUNT(*) FROM ready_queue WHERE request_id = ?", (first["id"],)
+            ).fetchone()[0], 1)
+            self.assertEqual(database.execute(
+                "SELECT singer_id FROM requests WHERE id = ?", (first["id"],)
+            ).fetchone()[0], "singer")
+        item = next(item for item in request_snapshot() if item["id"] == first["id"])
+        self.assertEqual([vocal["singer_id"] for vocal in item["backvocals"]], ["B", "C"])
+        with self.assertRaises(HTTPException) as duplicate:
+            create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "B")
+        self.assertEqual(duplicate.exception.status_code, 409)
+
     def test_missing_ready_video_is_requeued_without_changing_position(self):
         with connection() as database:
             generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
