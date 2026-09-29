@@ -17,8 +17,12 @@ button { cursor:pointer; }
 .error:not(:empty)::before { content:"\26A0\FE0E"; flex:none; font-family:"Segoe UI Symbol",sans-serif; font-size:18px; line-height:1; }
 #video { display:block; width:100%; height:100%; object-fit:contain; object-position:center; background:#000; }
 #video-overlay { position:absolute; inset:0; pointer-events:none; }
-.track { position:absolute; left:0; right:0; top:48%; min-height:64px; display:flex; align-items:center; justify-content:center; padding:10px 3vw; border-top:3px solid var(--lime); border-bottom:1px solid #ffffff66; color:var(--lime); background:#a78d22b8; text-align:center; font-size:clamp(20px,3vw,44px); font-weight:800; line-height:1.15; text-shadow:0 2px 4px #000; transform:translateY(-50%); transition:top .2s; }
-#lyric-text { max-width:100%; overflow-wrap:anywhere; }
+.track { position:absolute; left:0; right:0; top:48%; height:clamp(126px,18vh,210px); transform:translateY(-50%); transition:top .2s; overflow:hidden; }
+.track::before { content:""; position:absolute; z-index:2; left:50%; top:4%; bottom:4%; width:2px; background:#ffffff6b; box-shadow:0 0 8px #000; }
+#lyric-text { position:absolute; inset:0; }
+.lyric-block { position:absolute; left:0; top:calc(4% + (var(--lane) * 32%)); display:block; max-width:min(40vw,520px); padding:7px 12px; border:1px solid #ffffff9c; border-radius:4px; background:var(--block-color); color:#101619; font-size:clamp(16px,2vw,30px); font-weight:800; line-height:1.1; overflow-wrap:anywhere; box-shadow:0 2px 12px #000b; will-change:transform; }
+.lyric-block[data-result="hit"] { background:#5ac8e4; border-color:#d4f7ff; }
+.lyric-block[data-result="miss"] { background:#f47783; border-color:#ffd7db; }
 #live-score { position:absolute; z-index:3; top:12px; left:50%; transform:translateX(-50%); padding:8px 14px; border:1px solid var(--lime); background:#090d0dd9; color:var(--lime); font-size:clamp(14px,1.8vw,24px); font-weight:800; }
 #play { pointer-events:auto; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:18px; }
 #intermission { position:absolute; inset:0; display:block; padding:0; background:radial-gradient(ellipse at 8% 100%,#254c422e,transparent 60%),var(--ink); }

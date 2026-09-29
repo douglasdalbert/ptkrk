@@ -19,7 +19,10 @@ let barPosition = 1;
 let colorIndex = 0;
 let party = null;
 let captionBars = [];
-let activeCaptionBar = -1;
+let hitBlocks = new Set();
+let captionFrame = null;
+const visibleBlocks = new Map();
+const approachMs = 3000;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
 const confirmDialog = new ConfirmDialog();
 
@@ -43,6 +46,8 @@ async function command(path, options = {}) {
 
 function stopPlayback() {
   activeId = null;
+  cancelAnimationFrame(captionFrame);
+  captionFrame = null;
   clearInterval(playbackSyncTimer);
   playbackSyncTimer = null;
   video.pause();
@@ -50,11 +55,12 @@ function stopPlayback() {
   video.load();
   overlay.hidden = true;
   lyricTrack.hidden = true;
-  lyricText.textContent = "";
+  lyricText.replaceChildren();
   liveScore.hidden = true;
   liveScore.textContent = "";
   captionBars = [];
-  activeCaptionBar = -1;
+  hitBlocks = new Set();
+  visibleBlocks.clear();
   playButton.hidden = true;
   document.querySelector("#intermission").hidden = false;
 }
@@ -62,9 +68,10 @@ function stopPlayback() {
 async function startPlayback(item) {
   activeId = item.id;
   captionBars = [];
-  activeCaptionBar = -1;
+  hitBlocks = new Set();
+  visibleBlocks.clear();
   lyricTrack.hidden = true;
-  lyricText.textContent = "";
+  lyricText.replaceChildren();
   liveScore.hidden = true;
   liveScore.textContent = "";
   video.src = `/api/tv/${encodeURIComponent(item.id)}/video`;
@@ -106,16 +113,39 @@ async function loadCaptionBars(requestId) {
 
 function renderCaptionBar() {
   const time = video.currentTime * 1000;
-  const index = captionBars.findIndex(bar => time >= bar.start_ms && time < bar.end_ms);
-  if (index === activeCaptionBar) return;
-  activeCaptionBar = index;
-  if (index < 0) {
-    lyricTrack.hidden = true;
-    lyricText.textContent = "";
-    return;
+  const width = overlay.clientWidth;
+  const speed = width / (2 * approachMs);
+  const visible = new Set();
+  captionBars.forEach((bar, index) => {
+    const left = width / 2 + (bar.start_ms - time) * speed;
+    if (left > width || left < -width / 2) return;
+    visible.add(index);
+    let block = visibleBlocks.get(index);
+    if (!block) {
+      block = document.createElement("span");
+      block.className = "lyric-block";
+      block.textContent = bar.text;
+      block.style.setProperty("--lane", index % 3);
+      block.style.setProperty("--block-color", colors[colorIndex]);
+      lyricText.append(block);
+      visibleBlocks.set(index, block);
+    }
+    block.dataset.result = hitBlocks.has(index) ? "hit" :
+      time > (bar.score_window_end_ms ?? bar.end_ms) ? "miss" : "waiting";
+    block.style.transform = `translate3d(${left}px, 0, 0)`;
+  });
+  for (const [index, block] of visibleBlocks) {
+    if (!visible.has(index)) {
+      block.remove();
+      visibleBlocks.delete(index);
+    }
   }
-  lyricText.textContent = captionBars[index].text;
-  lyricTrack.hidden = false;
+  lyricTrack.hidden = !visible.size;
+}
+
+function animateCaptionBars() {
+  renderCaptionBar();
+  captionFrame = video.paused || video.ended ? null : requestAnimationFrame(animateCaptionBars);
 }
 
 function render(snapshot) {
@@ -187,6 +217,8 @@ function connect() {
     setConnectionStatus("connected", "Conectado");
     const message = JSON.parse(event.data);
     if (message.type === "score_update") {
+      if (message.request_id !== activeId) return;
+      if (message.result === "hit" && message.block_index != null) hitBlocks.add(message.block_index);
       liveScore.textContent = `${message.name}: ${message.points.toFixed(1)} / ${message.ranking_max}`;
       liveScore.hidden = false;
       return;
@@ -245,6 +277,14 @@ video.addEventListener("ended", async () => {
   finally { finishing = false; }
 });
 video.addEventListener("timeupdate", renderCaptionBar);
+video.addEventListener("play", () => {
+  if (captionFrame == null) captionFrame = requestAnimationFrame(animateCaptionBars);
+});
+video.addEventListener("pause", () => {
+  cancelAnimationFrame(captionFrame);
+  captionFrame = null;
+  renderCaptionBar();
+});
 
 document.addEventListener("keydown", event => {
   if (show.hidden || event.target instanceof HTMLInputElement) return;
@@ -261,16 +301,20 @@ document.addEventListener("keydown", event => {
 
 function moveTrack(direction) {
   barPosition = (barPosition + (direction > 0 ? 1 : 2)) % 3;
-  lyricTrack.style.top = ["7%", "48%", "88%"][barPosition];
+  lyricTrack.style.top = [
+    "max(7%, 105px)",
+    "50%",
+    "min(88%, calc(100% - 105px))",
+  ][barPosition];
 }
 
 document.querySelector("#move-track-action").addEventListener("click", () => moveTrack(1));
 
 function cycleColor() {
   colorIndex = (colorIndex + 1) % colors.length;
-  lyricTrack.style.borderColor = colors[colorIndex];
-  lyricTrack.style.color = colors[colorIndex];
-  lyricTrack.style.backgroundColor = `${colors[colorIndex]}55`;
+  for (const block of visibleBlocks.values()) {
+    block.style.setProperty("--block-color", colors[colorIndex]);
+  }
 }
 
 async function resetParty() {
