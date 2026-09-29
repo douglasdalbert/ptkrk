@@ -1,5 +1,7 @@
 import sqlite3
 
+from app.media import remove_unused_media
+
 SKIP_SECONDS = 5
 
 
@@ -63,8 +65,11 @@ def apply_skip(database: sqlite3.Connection, now: float) -> dict | None:
     ).fetchall()
     remaining = [row["request_id"] for row in rows if row["request_id"] != request_id]
     if current and current["accepted"]:
+        item = database.execute("SELECT video_id FROM requests WHERE id = ?", (request_id,)).fetchone()
         database.execute("UPDATE requests SET status = 'skipped' WHERE id = ?", (request_id,))
         database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        remove_unused_media(database, item["video_id"], generation)
     else:
         previous_position = next(index for index, row in enumerate(rows) if row["request_id"] == request_id)
         remaining.insert(min(max(2, previous_position), len(remaining)), request_id)
@@ -120,8 +125,11 @@ def finish_song(database: sqlite3.Connection, request_id: str, now: float) -> bo
     current = invitation_state(database)
     if current is None or current["request_id"] != request_id or not current["accepted"] or skip_state(database):
         return False
+    item = database.execute("SELECT video_id FROM requests WHERE id = ?", (request_id,)).fetchone()
     database.execute("UPDATE requests SET status = 'played' WHERE id = ?", (request_id,))
     database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
+    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+    remove_unused_media(database, item["video_id"], generation)
     for position, row in enumerate(database.execute(
         "SELECT request_id FROM ready_queue ORDER BY position"
     ).fetchall(), start=1):

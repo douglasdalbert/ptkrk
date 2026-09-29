@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,22 @@ from yt_dlp.utils import DownloadError
 MEDIA_ROOT = Path(os.environ.get("KARAOKE_MEDIA_PATH", "/media"))
 MAX_DURATION_SECONDS = 12 * 60
 MAX_FILE_BYTES = 500 * 1024 * 1024
+NODE_ENV = os.getenv("NODE_ENV", "production").strip().lower()
+
+
+def remove_unused_media(database: sqlite3.Connection, video_id: str, generation: str) -> bool:
+    if NODE_ENV == "development":
+        return False
+    active = database.execute(
+        """SELECT 1 FROM requests WHERE video_id = ?
+           AND status IN ('pending', 'processing', 'ready') LIMIT 1""",
+        (video_id,),
+    ).fetchone()
+    if active:
+        return False
+    for category, suffix in (("videos", ".mp4"), ("previews", ".jpg")):
+        (MEDIA_ROOT / generation / category / f"{video_id}{suffix}").unlink(missing_ok=True)
+    return True
 
 
 def download_video(video_id: str, generation: str | None = None) -> str:

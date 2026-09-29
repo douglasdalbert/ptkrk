@@ -3,7 +3,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from app.media import MEDIA_ROOT, create_preview, download_video
+from app.media import MEDIA_ROOT, create_preview, download_video, remove_unused_media
 from app.storage import connection, initialize
 
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +52,7 @@ def process_next() -> bool:
                 rows = database.execute("SELECT request_id FROM ready_queue ORDER BY position").fetchall()
                 for position, row in enumerate(rows, start=1):
                     database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row["request_id"]))
+                remove_unused_media(database, item["video_id"], generation)
     else:
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
@@ -62,6 +63,8 @@ def process_next() -> bool:
             )
     with connection() as database:
         current = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        if current == generation:
+            remove_unused_media(database, item["video_id"], generation)
     if current != generation:
         shutil.rmtree(MEDIA_ROOT / generation, ignore_errors=True)
     return True

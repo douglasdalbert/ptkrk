@@ -4,6 +4,7 @@ services:
   app:
     build: .
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
       KARAOKE_ALLOW_SKIP: ${KARAOKE_ALLOW_SKIP:-true}
       KARAOKE_LAN_IP: ${KARAOKE_LAN_IP:-}
     ports:
@@ -27,6 +28,7 @@ services:
   tv:
     build: .
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
       KARAOKE_TV_LOCAL: "true"
       KARAOKE_LAN_IP: ${KARAOKE_LAN_IP:-}
     ports:
@@ -39,6 +41,8 @@ services:
   worker:
     build: .
     command: ["python", "-m", "app.worker"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
     volumes:
       - db_data:/data
       - media_data:/media

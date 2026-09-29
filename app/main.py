@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 import qrcode
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
-from app.media import MEDIA_ROOT
+from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
 from app.storage import connection, initialize
 
@@ -488,7 +488,7 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         request = database.execute(
-            "SELECT status, singer_id FROM requests WHERE id = ?", (request_id,)
+            "SELECT status, singer_id, video_id FROM requests WHERE id = ?", (request_id,)
         ).fetchone()
         if request is None or request["status"] == "removed":
             raise HTTPException(404, "Pedido não encontrado")
@@ -505,6 +505,8 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
             raise HTTPException(409, "Não é possível remover uma música já aceita")
         if backvocal is not None:
             database.execute("DELETE FROM backvocals WHERE request_id = ? AND singer_id = ?", (request_id, singer_id))
+            generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+            remove_unused_media(database, request["video_id"], generation)
             if invited and invite["lead_accepted"] and not database.execute(
                 "SELECT 1 FROM backvocals WHERE request_id = ? AND joined = 1 AND accepted = 0 LIMIT 1", (request_id,)
             ).fetchone():
@@ -512,6 +514,8 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
             return
         database.execute("UPDATE requests SET status = 'removed' WHERE id = ?", (request_id,))
         database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        remove_unused_media(database, request["video_id"], generation)
         rows = database.execute("SELECT request_id FROM ready_queue ORDER BY position").fetchall()
         for position, row in enumerate(rows, start=1):
             database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row["request_id"]))

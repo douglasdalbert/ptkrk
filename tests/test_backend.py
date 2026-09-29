@@ -9,7 +9,7 @@ from unittest.mock import ANY, patch
 from fastapi import HTTPException
 
 from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
-from app.media import create_preview
+from app.media import create_preview, remove_unused_media
 from app.queue import enqueue_request
 from app.storage import connection, initialize
 from app.worker import process_next, recover_missing_media
@@ -77,6 +77,35 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(row["status"], "failed")
         self.assertTrue(row["error"])
 
+    def test_media_cleanup_is_production_only_and_waits_for_last_active_request(self):
+        media_root = Path(self.directory.name) / "media"
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO requests(id, singer_id, video_id) VALUES ('shared', 'singer', 'dQw4w9WgXcQ')"
+            )
+            database.execute("UPDATE requests SET status = 'failed' WHERE id = 'request'")
+        video = media_root / generation / "videos" / "dQw4w9WgXcQ.mp4"
+        preview = media_root / generation / "previews" / "dQw4w9WgXcQ.jpg"
+        video.parent.mkdir(parents=True)
+        preview.parent.mkdir(parents=True)
+        video.write_bytes(b"video")
+        preview.write_bytes(b"preview")
+
+        with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "development"):
+            with connection() as database:
+                self.assertFalse(remove_unused_media(database, "dQw4w9WgXcQ", generation))
+            self.assertTrue(video.exists())
+            self.assertTrue(preview.exists())
+
+        with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "production"):
+            with connection() as database:
+                self.assertFalse(remove_unused_media(database, "dQw4w9WgXcQ", generation))
+                database.execute("UPDATE requests SET status = 'failed' WHERE id = 'shared'")
+                self.assertTrue(remove_unused_media(database, "dQw4w9WgXcQ", generation))
+            self.assertFalse(video.exists())
+            self.assertFalse(preview.exists())
+
     def test_preview_requires_ready_request(self):
         with patch("app.main.MEDIA_ROOT", Path(self.directory.name)):
             with self.assertRaises(HTTPException) as missing:
@@ -139,16 +168,26 @@ class WorkerTests(unittest.TestCase):
     def test_removal_during_download_cannot_restore_request(self):
         def cancel_during_download(video_id, generation):
             remove_request("request", "singer")
+            video = media_root / generation / "videos" / f"{video_id}.mp4"
+            video.parent.mkdir(parents=True, exist_ok=True)
+            video.write_bytes(b"late download")
             return "Vídeo terminado"
 
-        with patch("app.worker.download_video", side_effect=cancel_during_download), patch("app.worker.create_preview"):
+        media_root = Path(self.directory.name) / "media"
+        with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "production"), \
+             patch("app.worker.download_video", side_effect=cancel_during_download), patch("app.worker.create_preview"):
             self.assertTrue(process_next())
+        self.assertFalse((media_root / self._generation() / "videos" / "dQw4w9WgXcQ.mp4").exists())
         with connection() as database:
             status = database.execute("SELECT status FROM requests WHERE id = 'request'").fetchone()["status"]
             queued = database.execute("SELECT COUNT(*) FROM ready_queue").fetchone()[0]
         self.assertEqual(status, "removed")
         self.assertEqual(queued, 0)
         self.assertEqual(request_snapshot(), [])
+
+    def _generation(self):
+        with connection() as database:
+            return database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
 
     def test_eleventh_waits_until_it_enters_first_ten(self):
         with connection() as database:
