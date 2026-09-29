@@ -6,7 +6,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from app.main import remove_request, request_snapshot
-from app.queue import enqueue_ready
+from app.queue import enqueue_request
 from app.storage import connection, initialize
 
 
@@ -34,7 +34,7 @@ class QueueTests(unittest.TestCase):
                 "INSERT INTO requests(id, client_id, video_id, status) VALUES (?, ?, ?, 'ready')",
                 (request_id, request_id[0], "glvVYIhdWlU"),
             )
-            enqueue_ready(database, request_id)
+            enqueue_request(database, request_id)
 
     def order(self):
         return [row["id"] for row in request_snapshot() if row["status"] == "ready"]

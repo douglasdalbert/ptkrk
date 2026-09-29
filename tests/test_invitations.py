@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from app.invitations import accept_invitation, expire_invitation, invitation_state, start_invitation
 from app.main import accept_request, party_snapshot, remove_request
-from app.queue import enqueue_ready
+from app.queue import enqueue_request
 from app.storage import connection, initialize
 
 
@@ -24,7 +24,7 @@ class InvitationTests(unittest.TestCase):
             for request_id in ("A1", "B1", "C1", "A2"):
                 database.execute("INSERT INTO requests(id, client_id, video_id, status) "
                                  "VALUES (?, ?, 'glvVYIhdWlU', 'ready')", (request_id, request_id[0]))
-                enqueue_ready(database, request_id)
+                enqueue_request(database, request_id)
 
     def tearDown(self):
         self.path_patch.stop()
@@ -69,6 +69,13 @@ class InvitationTests(unittest.TestCase):
         with connection() as database:
             self.assertIsNone(invitation_state(database))
             self.assertEqual(self.order(database), ["A1", "B1", "C1", "A2"])
+
+    def test_first_position_must_finish_processing_before_invite(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'processing' WHERE id = 'A1'")
+            self.assertIsNone(start_invitation(database, 100))
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'A1'")
+            self.assertEqual(start_invitation(database, 100)["request_id"], "A1")
 
     def test_deadline_survives_restart(self):
         with connection() as database:

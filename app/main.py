@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.invitations import accept_invitation, expire_invitation, invitation_state, start_invitation
 from app.media import MEDIA_ROOT
+from app.queue import enqueue_request
 from app.storage import connection, initialize
 
 
@@ -78,7 +79,7 @@ def request_snapshot() -> list[dict]:
                FROM requests JOIN clients ON clients.id = requests.client_id
              LEFT JOIN ready_queue ON ready_queue.request_id = requests.id
              WHERE requests.status != 'removed'
-             ORDER BY CASE WHEN requests.status = 'ready' AND ready_queue.position IS NOT NULL
+                 ORDER BY CASE WHEN ready_queue.position IS NOT NULL
                      THEN 0 ELSE 1 END,
                    ready_queue.position, requests.created_at, requests.rowid"""
         ).fetchall()
@@ -161,10 +162,12 @@ def create_request(payload: NewRequest, client_id: str = Depends(authenticated_c
     video_id = youtube_id(payload.youtubeCode)
     request_id = str(uuid4())
     with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
         database.execute(
             "INSERT INTO requests (id, client_id, video_id) VALUES (?, ?, ?)",
             (request_id, client_id, video_id),
         )
+        enqueue_request(database, request_id)
     return {"id": request_id, "status": "pending", "video_id": video_id}
 
 

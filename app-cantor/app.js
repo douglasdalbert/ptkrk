@@ -151,7 +151,7 @@ function previewFor(item, placeholder) {
 function renderRequests(items) {
   document.querySelector("#request-count").textContent = String(items.length);
   document.querySelector("#empty").hidden = items.length !== 0;
-  const statuses = { pending: "Na espera", processing: "Preparando", ready: "Pronto", failed: "Falhou" };
+  const statuses = { pending: "Em fila", processing: "Processando", ready: "Pronto", failed: "Falhou" };
   const content = document.createDocumentFragment();
   for (const item of items) {
     const row = document.createElement("li");
@@ -169,9 +169,19 @@ function renderRequests(items) {
     details.append(title, singerName);
     const status = document.createElement("span");
     status.className = `status ${item.status}`;
-    status.textContent = item.status === "ready" && item.position
-      ? `#${item.position} · Pronto`
-      : (statuses[item.status] || item.status);
+    const state = document.createElement("span");
+    state.className = "state-icon";
+    state.setAttribute("aria-hidden", "true");
+    state.textContent = { pending: "○", processing: "", ready: "✓", failed: "!" }[item.status] || "";
+    const stateText = document.createElement("span");
+    stateText.textContent = statuses[item.status] || item.status;
+    status.append(state, stateText);
+    if (item.position) {
+      const position = document.createElement("span");
+      position.className = "queue-position";
+      position.textContent = `#${item.position}`;
+      status.prepend(position);
+    }
     row.append(placeholder, details, status);
     if (singer && item.client_id === singer.client_id &&
         !(currentInvitation?.request_id === item.id && currentInvitation.accepted)) {

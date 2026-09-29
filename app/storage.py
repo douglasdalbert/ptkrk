@@ -66,7 +66,9 @@ def initialize() -> None:
         database.execute("BEGIN IMMEDIATE")
         queued = {row[0] for row in database.execute("SELECT request_id FROM ready_queue")}
         position = database.execute("SELECT COALESCE(MAX(position), 0) FROM ready_queue").fetchone()[0]
-        for row in database.execute("SELECT id FROM requests WHERE status = 'ready' ORDER BY created_at, rowid"):
+        for row in database.execute(
+            "SELECT id FROM requests WHERE status IN ('pending', 'processing', 'ready') ORDER BY created_at, rowid"
+        ):
             if row["id"] not in queued:
                 position += 1
                 database.execute("INSERT INTO ready_queue (request_id, position) VALUES (?, ?)", (row["id"], position))

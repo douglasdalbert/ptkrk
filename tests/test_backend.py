@@ -1,13 +1,16 @@
 import tempfile
 import unittest
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
 from app.media import create_preview
+from app.queue import enqueue_request
 from app.storage import connection, initialize
 from app.worker import process_next
 
@@ -48,6 +51,7 @@ class WorkerTests(unittest.TestCase):
                 "INSERT INTO requests (id, client_id, video_id) VALUES (?, ?, ?)",
                 ("request", "client", "dQw4w9WgXcQ"),
             )
+            enqueue_request(database, "request")
 
     def tearDown(self):
         self.path_patch.stop()
@@ -110,6 +114,83 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(status, "removed")
         self.assertEqual(queued, 0)
         self.assertEqual(request_snapshot(), [])
+
+    def test_eleventh_waits_until_it_enters_first_ten(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            for index in range(2, 12):
+                request_id = f"request-{index}"
+                database.execute(
+                    "INSERT INTO requests(id, client_id, video_id, status) VALUES (?, 'client', ?, 'ready')",
+                    (request_id, "glvVYIhdWlU"),
+                )
+                enqueue_request(database, request_id)
+            database.execute("UPDATE requests SET status = 'pending' WHERE id = 'request-11'")
+        with patch("app.worker.download_video") as download:
+            self.assertFalse(process_next())
+            download.assert_not_called()
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'removed' WHERE id = 'request-2'")
+            database.execute("DELETE FROM ready_queue WHERE request_id = 'request-2'")
+            for position, row in enumerate(database.execute(
+                "SELECT request_id FROM ready_queue ORDER BY position"
+            ).fetchall(), start=1):
+                database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row[0]))
+        with patch("app.worker.download_video", return_value="Nova música") as download, patch(
+            "app.worker.create_preview"
+        ):
+            self.assertTrue(process_next())
+            download.assert_called_once_with("glvVYIhdWlU")
+        with connection() as database:
+            status = database.execute("SELECT status FROM requests WHERE id = 'request-11'").fetchone()[0]
+        self.assertEqual(status, "ready")
+
+    def test_promoted_request_starts_without_canceling_in_progress_download(self):
+        started = Event()
+        finish = Event()
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            for index in range(2, 10):
+                request_id = f"A{index}"
+                database.execute(
+                    "INSERT INTO requests(id, client_id, video_id, status) VALUES (?, 'client', ?, 'ready')",
+                    (request_id, "glvVYIhdWlU"),
+                )
+                enqueue_request(database, request_id)
+            database.execute("INSERT INTO requests(id, client_id, video_id) VALUES ('A10', 'client', 'abcdefghijk')")
+            enqueue_request(database, "A10")
+
+        def download(video_id):
+            if video_id == "abcdefghijk":
+                started.set()
+                if not finish.wait(5):
+                    raise TimeoutError("Primeiro preparo não foi liberado")
+            return video_id
+
+        try:
+            with patch("app.worker.download_video", side_effect=download), patch("app.worker.create_preview"):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    first = executor.submit(process_next)
+                    self.assertTrue(started.wait(3))
+                    with connection() as database:
+                        database.execute("INSERT INTO clients(id,name,session_hash) VALUES ('C','C','C')")
+                        database.execute(
+                            "INSERT INTO requests(id, client_id, video_id) VALUES ('C1', 'C', 'lmnopqrstuv')"
+                        )
+                        enqueue_request(database, "C1")
+                        displaced = database.execute(
+                            "SELECT position FROM ready_queue WHERE request_id='A10'"
+                        ).fetchone()[0]
+                    self.assertEqual(displaced, 11)
+                    self.assertTrue(executor.submit(process_next).result(timeout=3))
+                    with connection() as database:
+                        self.assertEqual(database.execute(
+                            "SELECT status FROM requests WHERE id='C1'"
+                        ).fetchone()[0], "ready")
+                    finish.set()
+                    self.assertTrue(first.result(timeout=3))
+        finally:
+            finish.set()
 
 
 class PreviewTests(unittest.TestCase):

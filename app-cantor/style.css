@@ -71,7 +71,11 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .request-details { min-width: 0; flex: 1; }
 .request-details strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .request-details small { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
-.status { align-self: start; flex: none; color: var(--cyan); font-size: 10px; font-weight: 800; }
+.status { align-self: start; display: flex; align-items: center; gap: 3px; flex: none; color: var(--cyan); font-size: 10px; font-weight: 800; }
+.queue-position { margin-right: 3px; color: var(--text); }
+.state-icon { width: 13px; height: 13px; display: inline-grid; place-items: center; font-size: 13px; }
+.status.processing .state-icon { width: 11px; height: 11px; margin-right: 2px; border: 2px solid #64d4c34d; border-top-color: var(--cyan); border-radius: 50%; animation: processing-spin .8s linear infinite; }
+@keyframes processing-spin { to { transform: rotate(360deg); } }
 .status.ready { color: var(--lime); }
 .status.failed { color: var(--pink); }
 .remove-button { align-self: center; flex: none; width: 32px; height: 36px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 26px; line-height: 1; }

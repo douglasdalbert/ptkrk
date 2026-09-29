@@ -16,11 +16,11 @@ def start_invitation(database: sqlite3.Connection, now: float) -> dict | None:
     if current:
         return current
     first = database.execute(
-        """SELECT ready_queue.request_id FROM ready_queue
+        """SELECT ready_queue.request_id, requests.status FROM ready_queue
            JOIN requests ON requests.id = ready_queue.request_id
-           WHERE requests.status = 'ready' ORDER BY ready_queue.position LIMIT 1"""
+           ORDER BY ready_queue.position LIMIT 1"""
     ).fetchone()
-    if first is None:
+    if first is None or first["status"] != "ready":
         return None
     database.execute(
         "INSERT INTO invitation (id, request_id, deadline) VALUES (1, ?, ?)",
