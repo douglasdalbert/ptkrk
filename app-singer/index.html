@@ -15,11 +15,11 @@
         <span id="connection" class="connection" role="status">Conectando</span>
       </header>
 
-      <main>
+      <main class="scroll-content">
         <section id="entry" class="entry" aria-labelledby="entry-title">
           <p class="eyebrow">AO VIVO · REDE LOCAL</p>
           <h1 id="entry-title">Entre na festa.</h1>
-          <form id="entry-form" class="form-stack">
+          <form id="entry-form" class="form-stack" novalidate>
             <label for="singer-name">Seu nome</label>
             <input id="singer-name" name="name" maxlength="60" autocomplete="nickname" required placeholder="Como vamos te chamar?">
             <button class="primary" type="submit">Entrar <span aria-hidden="true">→</span></button>
@@ -33,28 +33,7 @@
             <button id="sign-out" class="text-button" type="button">Trocar pessoa</button>
           </div>
 
-          <section id="skipping" class="skipping" role="status" hidden>
-            <strong>Pulando música</strong><span id="skip-clock"></span>
-          </section>
-
-          <section id="invitation" class="invitation" aria-labelledby="invitation-title" hidden>
-            <p class="eyebrow">SUA VEZ</p>
-            <div class="invitation-row">
-              <div>
-                <h2 id="invitation-title">Hora de cantar</h2>
-                <p id="invitation-song"></p>
-              </div>
-            </div>
-            <button id="accept-button" class="primary" type="button">OK, vou cantar</button>
-            <p id="invitation-message" role="status"></p>
-          </section>
-
-          <div id="skip-action" class="skip-action" hidden>
-            <button id="skip-button" class="text-button" type="button">Pular música em uso</button>
-            <p id="skip-message" role="status"></p>
-          </div>
-
-          <form id="request-form" class="request-form">
+          <form id="request-form" class="request-form" novalidate>
             <label for="video-url">Peça uma música</label>
             <div class="request-row">
               <input id="video-url" type="text" name="video" required placeholder="Link ou código do YouTube" autocomplete="off" inputmode="url">
@@ -76,5 +55,25 @@
         </section>
       </main>
     </div>
+    <footer id="action-footer" class="action-footer" hidden>
+      <div class="footer-inner">
+        <section id="skipping" class="skipping" role="status" hidden>
+          <strong>Pulando música</strong><span id="skip-clock"></span>
+        </section>
+        <section id="invitation" class="invitation" aria-labelledby="invitation-title" hidden>
+          <div class="invitation-details">
+            <span class="eyebrow">SUA VEZ</span>
+            <strong id="invitation-title">Hora de cantar</strong>
+            <span id="invitation-song"></span>
+          </div>
+          <p id="invitation-message" role="status"></p>
+          <button id="accept-button" class="footer-button accept-button" type="button">OK, vou cantar</button>
+        </section>
+        <div id="skip-action" class="skip-action" hidden>
+          <p id="skip-message" role="status"></p>
+          <button id="skip-button" class="footer-button skip-button" type="button">Pular música</button>
+        </div>
+      </div>
+    </footer>
   </body>
 </html>

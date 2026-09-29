@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-cantor` e `app-tv` iniciais, fila, reprodução local e reset de festa; análise vocal, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-singer` e `app-tv` iniciais, fila, reprodução local e reset de festa; análise vocal, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -8,7 +8,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Fluxos de interface
 
-- **Entrada pela TV:** a tela roda no navegador do PC host, replicada na TV por HDMI, sem chave. `app-tv` exibe no canto inferior direito um QR que contém **somente** `http://IP_WIFI_DO_HOST:8000/cantor`; mostrar o endereço em texto também. O QR ajuda a encontrar o host, não é requisito para login nem contém ID/segredo da festa. Testar leitura a distância.
+- **Entrada pela TV:** a tela roda no navegador do PC host, replicada na TV por HDMI, sem chave. `app-tv` exibe no canto inferior direito um QR que contém **somente** `http://IP_WIFI_DO_HOST:8000/cantor` (a interface `app-singer`); mostrar o endereço em texto também. O QR ajuda a encontrar o host, não é requisito para login nem contém ID/segredo da festa. Testar leitura a distância.
 - **Entrada no celular:** informar nome; o servidor cria um `singer_id` e devolve também `party` (geração atual) e token de sessão, persistidos no navegador. Não confiar no ID sozinho como autenticação: validar aceite e eventos do microfone pelo token.
 - **Fluxo do convidado:** conectar-se ao mesmo Wi-Fi, ler o QR **ou abrir diretamente a URL LAN**, informar o nome e usar o celular para escolher vídeos; quando chegar sua vez, aceitar e cantar com o microfone, se já estiver habilitado e autorizado pelo navegador. No PC host também é possível abrir `http://localhost:8000/cantor`; no celular, `localhost` apontaria para o próprio celular. Após reset, pedir nome novamente no mesmo endereço.
 - **Tela do celular:** mostrar toda a fila em ordem, autor e título, quatro posições protegidas, melhor pontuação pessoal e melhor pontuação geral (autor e música). Receber alterações por WebSocket, com snapshot integral na reconexão; sem polling de 10 segundos.
@@ -57,10 +57,10 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Arquitetura inicial proposta
 
-- **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Se as interfaces forem separadas em projetos de frontend TypeScript, seus nomes serão **`app-cantor`** (celular) e **`app-tv`** (host/TV); compartilharão API e WebSocket, sem criar dois backends nem dois projetos Docker Compose. Framework a decidir após protótipo. Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
+- **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. As interfaces se chamam **`app-singer`** (celular) e **`app-tv`** (host/TV); compartilham API e WebSocket, sem criar dois backends nem dois projetos Docker Compose. Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
 - **SQLite** em volume Docker nomeado, modo WAL, para fila, cantores, análises e recordes; volume separado para mídia. A tabela `singers`, as chaves `singer_id` e as contagens substituem `clients`/`client_id` sem perder a festa existente; sessões antigas do navegador são convertidas no próximo acesso. Primeiro MVP: tarefas persistidas no banco, reivindicadas transacionalmente por um worker. Redis ou outro broker só se medições exigirem. Sem múltiplas réplicas de app até coordenar relógios/fila.
-- Compose `name: karaoke` agrupa `app` (LAN, porta 8000), `tv` (somente host, `127.0.0.1:8001`) e `worker`, com volumes persistentes separados. `start.ps1` detecta automaticamente o IPv4 Wi-Fi do Windows e fornece esse IP ao QR; não configurar URL manualmente. `app-cantor` e `app-tv` são interfaces do mesmo sistema, não projetos Compose adicionais. Não tocar em `saope`; verificar firewall e isolamento Wi-Fi. HTTPS confiável continua pendente para o microfone.
-- **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). O QR deve apontar para um endereço LAN que os celulares consigam abrir e, quando houver microfone, para a origem HTTPS usada pelo `app-cantor` com `wss`; `localhost` na TV não aponta para o host no celular. Uma opção sem custos é CA local (`mkcert`), certificado para IP/hostname estável e proxy HTTPS no Compose, mas cada celular deve instalar e confiar na CA antes de usar o microfone; ler o QR não instala essa confiança. Alternativa a avaliar: certificado público gratuito por desafio DNS, se houver domínio/hostname e DNS local disponíveis. Testar permissão, autoplay e suspensão da aba.
+- Compose `name: karaoke` agrupa `app` (LAN, porta 8000), `tv` (somente host, `127.0.0.1:8001`) e `worker`, com volumes persistentes separados. `start.ps1` detecta automaticamente o IPv4 Wi-Fi do Windows e fornece esse IP ao QR; não configurar URL manualmente. `app-singer` e `app-tv` são interfaces do mesmo sistema, não projetos Compose adicionais. Não tocar em `saope`; verificar firewall e isolamento Wi-Fi. HTTPS confiável continua pendente para o microfone.
+- **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). O QR deve apontar para um endereço LAN que os celulares consigam abrir e, quando houver microfone, para a origem HTTPS usada pelo `app-singer` com `wss`; `localhost` na TV não aponta para o host no celular. Uma opção sem custos é CA local (`mkcert`), certificado para IP/hostname estável e proxy HTTPS no Compose, mas cada celular deve instalar e confiar na CA antes de usar o microfone; ler o QR não instala essa confiança. Alternativa a avaliar: certificado público gratuito por desafio DNS, se houver domínio/hostname e DNS local disponíveis. Testar permissão, autoplay e suspensão da aba.
 - Validar URL/origem e tamanho dos uploads, escapar títulos, limitar pedidos e negar acesso do servidor a endereços arbitrários internos. Celulares não controlam a TV.
 
 ## Checklist incremental
@@ -82,7 +82,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Gerar prévia JPEG com FFmpeg antes de marcar pedido como pronto; entregar prévia via API autenticada e testar com vídeo sintético.
 - [x] Testar download real de um vídeo público do YouTube (`VV1XWJN3nJo`): MP4 local com resposta parcial `206` e prévia JPEG `200` na TV.
 - [ ] Testar extração/análise vocal e acesso pelo QR em um celular físico na LAN. Um vídeo público funcionar não garante suporte a todos.
-- [x] Implementar `app-cantor` inicial: entrada por nome, sessão persistida, pedidos pelo celular e layout compacto.
+- [x] Implementar `app-singer` inicial: entrada por nome, sessão persistida, pedidos pelo celular e layout compacto.
+- [x] Fixar barra de ação de 48px no rodapé do `app-singer`: pulo como botão e aceite exclusivo quando for a vez do cantor; conteúdo restante rolável.
 - [x] Detectar automaticamente IP Wi-Fi no host pelo `start.ps1`; exibir QR/URL de acesso ao cantor no canto inferior direito da TV, sem dados da festa. Teste do PNG concluído.
 - [x] Invalidar sessões antigas no reset sem mudar a URL/QR; `POST /api/singers` retorna o novo `party`, e respostas da API e WebSocket permitem detectar troca de festa. Falta testar leitura do QR por um celular real na TV.
 - [x] Exibir no celular os estados de download e prévias já disponíveis na API; confirmar push em navegador sem polling dos celulares.

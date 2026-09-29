@@ -9,7 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY app-cantor ./app-cantor
+COPY app-singer ./app-singer
 COPY app-tv ./app-tv
 COPY tests ./tests
 

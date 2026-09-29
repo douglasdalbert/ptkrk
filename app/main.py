@@ -50,7 +50,7 @@ async def identify_party(request: Request, call_next):
     return response
 
 
-SINGER_ROOT = Path(__file__).resolve().parent.parent / "app-cantor"
+SINGER_ROOT = Path(__file__).resolve().parent.parent / "app-singer"
 TV_ROOT = Path(__file__).resolve().parent.parent / "app-tv"
 app.mount("/cantor/assets", StaticFiles(directory=SINGER_ROOT), name="cantor-assets")
 if os.getenv("KARAOKE_TV_LOCAL") == "true":

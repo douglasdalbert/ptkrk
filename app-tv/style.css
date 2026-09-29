@@ -11,7 +11,8 @@ button { cursor:pointer; }
 .login form { display:grid; gap:12px; width:min(360px,90vw); }
 .login input { padding:14px; border:1px solid #777; border-radius:3px; background:#191b1f; color:white; }
 .login button,#play { padding:14px 22px; border:0; border-radius:3px; background:var(--lime); font-weight:bold; color:#121510; }
-#login-error,.error { color:var(--pink); }
+.error:not(:empty) { display:flex; align-items:flex-start; gap:9px; padding:10px 12px; border-left:3px solid #ff5868; border-radius:3px; background:#ff586824; color:#ff5868; font-weight:bold; overflow-wrap:anywhere; }
+.error:not(:empty)::before { content:"\26A0\FE0E"; flex:none; font-family:"Segoe UI Symbol",sans-serif; font-size:18px; line-height:1; }
 #video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:black; }
 #video-overlay { position:absolute; inset:0; pointer-events:none; }
 .track { position:absolute; left:0; right:0; top:48%; height:28px; background:#a78d2255; border-top:2px solid var(--lime); color:var(--lime); font-size:23px; transition:top .2s; }
