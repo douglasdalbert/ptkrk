@@ -186,12 +186,18 @@ document.addEventListener("keydown", event => {
     resetParty();
   } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
-    barPosition = (barPosition + (event.key === "ArrowDown" ? 1 : 2)) % 3;
-    document.querySelector("#track").style.top = ["7%", "48%", "88%"][barPosition];
+    moveTrack(event.key === "ArrowDown" ? 1 : -1);
   } else if (event.key.toLowerCase() === "c" && !event.ctrlKey && !event.altKey) {
     cycleColor();
   }
 });
+
+function moveTrack(direction) {
+  barPosition = (barPosition + (direction > 0 ? 1 : 2)) % 3;
+  document.querySelector("#track").style.top = ["7%", "48%", "88%"][barPosition];
+}
+
+document.querySelector("#move-track-action").addEventListener("click", () => moveTrack(1));
 
 function cycleColor() {
   colorIndex = (colorIndex + 1) % colors.length;

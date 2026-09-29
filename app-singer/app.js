@@ -33,7 +33,6 @@ let latestItems = [];
 let partySingers = [];
 let pendingGroupPrompt = null;
 let failureAlertActive = false;
-let waitingForDialog = false;
 
 function connectionState(text, online = false) {
   connectionLabel.textContent = text;
@@ -98,6 +97,8 @@ function clearSession() {
     message.textContent = "";
   }
   document.querySelector("#entry-error").hidden = true;
+  document.querySelector("#failure-alert").hidden = true;
+  document.querySelector("#failure-alert").textContent = "";
   localStorage.removeItem(storageKey);
   clearTimeout(reconnectTimer);
   socket?.close();
@@ -324,32 +325,20 @@ function showFailedRequest(items) {
     (item.singer_id === singer.singer_id || item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1)) &&
     !acknowledgedFailures.has(item.id));
   if (!failed) return;
-  if (confirmDialog.dialog.open) {
-    if (!waitingForDialog) {
-      waitingForDialog = true;
-      confirmDialog.dialog.addEventListener("close", () => {
-        waitingForDialog = false;
-        showFailedRequest(latestItems);
-      }, { once: true });
-    }
-    return;
-  }
   const owner = singer;
   failureAlertActive = true;
   (async () => {
+    const alert = document.querySelector("#failure-alert");
+    alert.textContent = `Não foi possível preparar "${failed.title || `youtube.com/watch?v=${failed.video_id}`}". ${failed.error || "O vídeo não pôde ser preparado."}`;
+    alert.hidden = false;
     try {
-      await confirmDialog.open({
-        title: "Não foi possível preparar a música",
-        message: `"${failed.title || `youtube.com/watch?v=${failed.video_id}}": ${failed.error || "O vídeo não pôde ser preparado."}`,
-        confirmLabel: "Entendi",
-        alert: true,
-      });
+      await new Promise(resolve => setTimeout(resolve, 2000));
       if (singer !== owner) return;
       acknowledgedFailures.add(failed.id);
+      alert.hidden = true;
+      alert.textContent = "";
       renderRequests(latestItems);
-      if (failed.singer_id === singer.singer_id) {
-        await api(`/api/requests/${encodeURIComponent(failed.id)}`, { method: "DELETE" });
-      }
+      await api(`/api/requests/${encodeURIComponent(failed.id)}`, { method: "DELETE" });
     } catch (problem) {
       if (singer === owner) showError(document.querySelector("#request-message"), problem.message);
     } finally {

@@ -86,6 +86,7 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .request-row input { flex: 1; }
 .message { min-height: 19px; margin: 10px 0 0; color: var(--cyan); font-size: 12px; }
 .message.error { color: var(--danger); font-size: 13px; }
+.failure-alert { position: fixed; z-index: 30; top: max(16px, env(safe-area-inset-top)); left: 16px; right: 16px; max-width: 688px; margin: 0 auto; padding: 12px 14px; border-left: 3px solid var(--danger); border-radius: 3px; background: #351c21f2; color: var(--text); box-shadow: 0 8px 28px #0009; font-size: 13px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
 .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scores div { display: grid; gap: 5px; }
 .scores div + div { padding-left: 16px; border-left: 1px solid var(--border); }
