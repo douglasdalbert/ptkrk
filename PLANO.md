@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-cantor` inicial, fila pronta e regras de convite/aceite persistidas; controle da TV, reprodução, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias, `app-cantor` e `app-tv` iniciais, fila, reprodução local e reset de festa; análise vocal, microfone e pontuação ainda não implementados. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -8,7 +8,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Fluxos de interface
 
-- **Entrada pela TV:** `app-tv` exibe no canto inferior direito um QR legível da festa atual, inclusive durante os vídeos sem cobrir controles essenciais. O código abre no celular o endereço do `app-cantor` acessível pela rede local, com convite associado à geração da festa; mostrar também o endereço curto em texto para quem não puder ler o QR. Nunca colocar token de administração da TV nesse link. Testar tamanho e contraste na TV e leitura a distância.
+- **Entrada pela TV:** a tela roda no navegador do PC host, replicada na TV por HDMI, sem chave. `app-tv` exibe no canto inferior direito um QR legível da festa atual; o código abre `app-cantor` no IP Wi-Fi do host, com geração da festa na URL. Mostrar o endereço em texto também. Testar leitura a distância.
 - **Entrada no celular:** informar nome; o servidor cria um `client_id` persistido no navegador. Não confiar no ID sozinho como autenticação: emitir também um segredo de sessão para validar aceite e eventos do microfone.
 - **Fluxo do convidado:** conectar-se ao mesmo Wi-Fi, ler o QR, informar o nome e usar o celular para escolher vídeos; quando chegar sua vez, aceitar e cantar com o microfone, se já estiver habilitado e autorizado pelo navegador. Se o link estiver vencido ou a festa tiver sido reiniciada, pedir para ler o novo QR.
 - **Tela do celular:** mostrar toda a fila em ordem, autor e título, quatro posições protegidas, melhor pontuação pessoal e melhor pontuação geral (autor e música). Receber alterações por WebSocket, com snapshot integral na reconexão; sem polling de 10 segundos.
@@ -16,10 +16,10 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - **Remoção pelo cantor:** cada pessoa pode tirar uma música que pediu antes de aceitá-la, inclusive se estiver em preparo ou falhou. Mostrar confirmação reutilizável `ConfirmDialog` com título e imagem de prévia quando disponível; cancelar mantém o pedido. Só o dono pode confirmar; o servidor remove da fila e atualiza as posições para todos, sem apagar o cache compartilhado de vídeo usado por outros pedidos. Um download já em andamento pode terminar, mas não pode recriar o pedido removido.
 - **Convite:** o dono da primeira música pronta entre as quatro do pódio vê aviso com botão OK, sem prazo automático de aceite. Tentar vibrar quando suportado; notificações/vibração em segundo plano não são garantidas. Só o servidor valida o aceite.
 - **Pular música:** qualquer cliente pode pedir para pular a música em uso (aguardando aceite ou já em reprodução), se `KARAOKE_ALLOW_SKIP` estiver habilitado (padrão `true`). Após `ConfirmDialog`, publicar "Pulando música" e contar 5 s para todos; então avançar para a próxima pronta do pódio. Antes do aceite, adiar a atual para a terceira posição sem apagá-la; após o aceite, encerrá-la sem nova contagem ou retorno à fila. Nenhum pulo ocorre automaticamente por demora do cantor.
-- **TV durante a música:** vídeo e áudio originais ocupam a tela com barra animada e pontuação por cima. Usar fullscreen do navegador (F11), pois fullscreen nativo do player pode ocultar overlays.
+- **TV durante a música:** vídeo e áudio originais ocupam a tela. A barra atual é apenas um marcador visual reposicionável com cinco cores; animação sincronizada e pontuação dependem da futura análise vocal. Usar fullscreen do navegador (F11), pois fullscreen nativo do player pode ocultar overlays. Se o navegador bloquear autoplay com áudio, o apresentador usa o botão Reproduzir.
 - **TV entre músicas:** prévia do próximo vídeo ocupa cerca de 50% da tela com nome, título e contagem regressiva; abaixo, três próximas prévias lado a lado, cada uma com cerca de 15% da área, nome e título. Adaptar para filas com menos de quatro pedidos.
 - **Teclado do host:** setas cima/baixo percorrem ciclicamente topo, meio e base da barra (base + baixo = topo; topo + cima = base). A barra cobre toda a largura do vídeo e fica sobre legendas existentes conforme a posição escolhida. `C` alterna cinco paletas de contraste: padrão amarelo escuro, verde para acerto e vermelho para erro, além de quatro alternativas a definir/testar em vídeos claros e escuros. Celulares não recebem esses atalhos.
-- **Nova festa na TV:** `Ctrl+Alt+N` no teclado do `app-tv` inicia imediatamente um karaokê do zero, sem preservar fila, pontuações ou identidades. A página deve interceptar o atalho e testar seu funcionamento no navegador do host. Apenas a sessão autorizada da TV pode disparar o reset.
+- **Nova festa na TV:** `Ctrl+Alt+N` no teclado do `app-tv` inicia imediatamente um karaokê do zero, sem preservar fila, pontuações ou identidades. A página intercepta o atalho; o endpoint de reset existe apenas no serviço da TV, ligado ao loopback do host (`127.0.0.1:8001`), não na porta LAN dos celulares. Testar o atalho no navegador real do host.
 
 ## Reset completo da festa
 
@@ -41,8 +41,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Mídia e limite legal
 
-- **Requisito obrigatório desde o MVP:** aceitar link do YouTube no celular, transmitir só seu `youtubeCode` ao host, baixar o vídeo, analisar áudio antes de tocar, guardar intervalos e reproduzir o arquivo local com vídeo e áudio originais na TV. Usar `yt-dlp` para obtenção de vídeos acessíveis e `FFmpeg` para normalização/extração de áudio e prévia; tratar falhas e mudanças do YouTube sem travar a fila. Não contornar DRM nem controles de acesso.
-- Validar no servidor apenas IDs de vídeo do YouTube com 11 caracteres permitidos, montar a URL canônica no worker (não permitir download de URLs arbitrárias), limitar duração/tamanho e evitar duplicar arquivo já baixado. **Pendente operacional:** confirmar que os vídeos escolhidos podem ser baixados, armazenados e exibidos conforme direitos e termos aplicáveis. Link público não garante isso; não prometer suporte a todo vídeo.
+- **Requisito obrigatório desde o MVP:** usar vídeos públicos do YouTube escolhidos na festa, aceitar o link no celular, transmitir só seu `youtubeCode` ao host, baixar o vídeo, analisar áudio antes de tocar, guardar intervalos e reproduzir o arquivo local com vídeo e áudio originais na TV. Usar `yt-dlp` para vídeos acessíveis e `FFmpeg` para extração de áudio/prévia; tratar falhas e mudanças do YouTube sem travar a fila. Não contornar DRM nem controles de acesso.
+- Validar no servidor apenas IDs de vídeo do YouTube com 11 caracteres permitidos, montar a URL canônica no worker (não permitir URLs arbitrárias), limitar duração/tamanho e evitar duplicar arquivo já baixado. Vídeo público não implica autorização automática de download, armazenamento ou reprodução; verificar as condições aplicáveis aos vídeos usados. Alguns vídeos públicos podem falhar por restrições ou mudanças da plataforma; teste real ainda pendente.
 - Processar mídia antes do show: separar vocais opcionalmente, detectar regiões com voz do cantor e intensidade relativa, armazenar `[inicio_ms, fim_ms]` com confiança por arquivo. Instrumentos e vozes do público podem produzir falsos positivos; testar com vídeos representativos. Cachear análise, limitar tamanho/duração/armazenamento e tratar codec/falhas. Nunca executar modelo pesado durante a música.
 - Limitar download e análise vocal às **dez primeiras posições** da fila, priorizando a ordem atual de uso. Até dois trabalhos podem ser preparados simultaneamente; se alguém sobe para as dez primeiras por prioridade, começa assim que houver capacidade sem cancelar um trabalho já iniciado que caiu para a 11ª posição. Separação vocal e montagem de barras ainda precisam ser implementadas no worker; manter o mesmo limite quando entrarem.
 
@@ -59,7 +59,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - **Python + FastAPI** para API, WebSocket, fila, sessões e pontuação. Se as interfaces forem separadas em projetos de frontend TypeScript, seus nomes serão **`app-cantor`** (celular) e **`app-tv`** (host/TV); compartilharão API e WebSocket, sem criar dois backends nem dois projetos Docker Compose. Framework a decidir após protótipo. Um worker Python separado executa FFmpeg e análise; nunca bloquear o processo da TV com análise pesada.
 - **SQLite** em volume Docker nomeado, modo WAL, para fila, clientes, análises e recordes; volume separado para mídia. Primeiro MVP: tarefas persistidas no banco, reivindicadas transacionalmente por um worker. Redis ou outro broker só se medições exigirem. Sem múltiplas réplicas de app até coordenar relógios/fila.
-- Compose `name: karaoke` já configura o backend `app`, o `worker` de download, volumes persistentes separados (`db_data` e `media_data`) e porta `${KARAOKE_PORT:-8000}`. O Docker Desktop agrupa os containers sob `karaoke`, independentemente de `saope`; os nomes `app-cantor` e `app-tv` identificam as futuras interfaces, não projetos Compose adicionais. Não criar pasta dentro de `saope` nem tocar nos seus containers. Expor apenas o backend para a LAN. Verificar firewall do Windows, IP da máquina e isolamento Wi-Fi entre dispositivos.
+- Compose `name: karaoke` agrupa `app` (LAN, porta 8000), `tv` (somente host, `127.0.0.1:8001`) e `worker`, com volumes persistentes separados. `start.ps1` detecta automaticamente o IPv4 Wi-Fi do Windows e fornece esse IP ao QR; não configurar URL manualmente. `app-cantor` e `app-tv` são interfaces do mesmo sistema, não projetos Compose adicionais. Não tocar em `saope`; verificar firewall e isolamento Wi-Fi. HTTPS confiável continua pendente para o microfone.
 - **HTTPS confiável no celular é necessário para captura do microfone** (`getUserMedia` exige contexto seguro, salvo exceções como localhost). O QR deve apontar para um endereço LAN que os celulares consigam abrir e, quando houver microfone, para a origem HTTPS usada pelo `app-cantor` com `wss`; `localhost` na TV não aponta para o host no celular. Uma opção sem custos é CA local (`mkcert`), certificado para IP/hostname estável e proxy HTTPS no Compose, mas cada celular deve instalar e confiar na CA antes de usar o microfone; ler o QR não instala essa confiança. Alternativa a avaliar: certificado público gratuito por desafio DNS, se houver domínio/hostname e DNS local disponíveis. Testar permissão, autoplay e suspensão da aba.
 - Validar URL/origem e tamanho dos uploads, escapar títulos, limitar pedidos e negar acesso do servidor a endereços arbitrários internos. Celulares não controlam a TV.
 
@@ -69,7 +69,8 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 - [x] Confirmar YouTube obrigatório desde o MVP e download no host.
 - [x] Confirmar `saope` como outro projeto no Docker Desktop; usar projeto Compose `karaoke` independente.
-- [ ] Confirmar direitos/fontes de vídeo permitidas e recursos do PC host e rede Wi-Fi.
+- [x] Confirmar vídeos públicos do YouTube como fonte desejada.
+- [ ] Verificar condições de uso dos vídeos escolhidos e recursos do PC host/rede Wi-Fi.
 - [ ] Medir em aparelhos reais: análise de voz, eco da TV, latência e HTTPS/microfone.
 - [ ] Especificar desempates da fila e testes para os cenários A/B/C acima.
 
@@ -79,9 +80,11 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Implementar banco SQLite, cadastro por nome com sessão e API de pedidos com validação do código de vídeo do YouTube.
 - [x] Adicionar worker independente de download com `yt-dlp` e FFmpeg, limite de 12 minutos/300 MB e testes sem mídia real.
 - [x] Gerar prévia JPEG com FFmpeg antes de marcar pedido como pronto; entregar prévia via API autenticada e testar com vídeo sintético.
-- [ ] Testar download autorizado real, extração/análise de áudio e acesso real pela LAN.
+- [x] Testar download real de um vídeo público do YouTube (`VV1XWJN3nJo`): MP4 local com resposta parcial `206` e prévia JPEG `200` na TV.
+- [ ] Testar extração/análise vocal e acesso pelo QR em um celular físico na LAN. Um vídeo público funcionar não garante suporte a todos.
 - [x] Implementar `app-cantor` inicial: entrada por nome, sessão persistida, pedidos pelo celular e layout compacto.
-- [ ] Exibir no `app-tv` QR e endereço da festa para abrir `app-cantor` pela LAN, renovando convite no reset; testar leitura na TV e rejeição de QR antigo.
+- [x] Detectar automaticamente IP Wi-Fi no host pelo `start.ps1`; exibir QR/URL da geração atual no canto inferior direito da TV. Teste do PNG concluído.
+- [x] Renovar o QR no reset e rejeitar QR antigo no servidor; falta testar leitura por um celular real na TV.
 - [x] Exibir no celular os estados de download e prévias já disponíveis na API; confirmar push em navegador sem polling dos celulares.
 - [x] Adicionar WebSocket autenticado para publicar alterações de pedidos; observador único do SQLite no servidor enquanto o worker é outro processo.
 - [x] Posicionar pedidos desde a entrada, intercalar cantores e proteger as quatro primeiras posições; testar A/B/C e selecionar a primeira pronta do pódio sem reordená-lo.
@@ -90,10 +93,11 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Persistir aceite autenticado e único e contagem das apresentações aceitas, sem timeout automático; exibir aviso/OK ao dono com vibração opcional.
 - [x] Persistir pedido manual de pulo por qualquer cliente com `ConfirmDialog`, configuração `KARAOKE_ALLOW_SKIP` (padrão `true`) e contagem de 5 s no servidor; testar adiamento antes do aceite e encerramento depois do aceite.
 - [x] Permitir remover um pedido próprio não aceito após `ConfirmDialog` reutilizável com título e prévia opcional; cancelar conserva o pedido, confirmar compacta a fila e impede ressurgimento ao terminar download.
-- [ ] Integrar ativação de convites, reprodução e interrupção após pulo ao `app-tv`; sem TV ativa não iniciar convites nem tocar vídeos.
-- [ ] Implementar `app-tv`: interface da TV, reprodução, intervalo e atalhos de barra/cores.
-- [ ] Implementar `Ctrl+Alt+N` somente no `app-tv` com reset integral no servidor, limpeza da mídia e invalidação/desconexão de todos os clientes.
-- [ ] Testar reset durante vídeo, aceite e download, com cliente conectado e offline, e repetição do atalho sem ressuscitar dados antigos.
+- [x] Ativar convites com a TV local conectada, reproduzir MP4 após aceite e avançar ao fim ou ao concluir pulo; validar que a porta LAN não expõe controle da TV e testar streaming parcial.
+- [x] Implementar `app-tv` inicial: intervalo com prévia principal e três seguintes, vídeo sobreposto, atalhos de posições e cinco cores do marcador.
+- [ ] Testar com vídeo real e celulares na LAN: autoplay, áudio, reconexão da TV durante vídeo e leitura do QR a distância.
+- [x] Implementar `Ctrl+Alt+N` somente no `app-tv`: nova geração, limpeza do SQLite/mídia, invalidação das sessões e QR novo; teste isolado do endpoint concluído.
+- [ ] Testar reset durante vídeo, aceite e download em celulares reais, incluindo cliente offline e repetição do atalho.
 - [ ] Testar reinício, reconexão e múltiplos celulares.
 
 ### 2. Sincronismo e placar
@@ -112,12 +116,12 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 
 ## Perguntas pendentes
 
-1. Quais vídeos do YouTube estão autorizados para baixar/processar/exibir neste uso?
+1. Verificar condições de download, armazenamento e exibição dos vídeos públicos efetivamente usados nesta festa.
 2. Podemos testar um celular cantando perto da TV (com e sem fones) e qual é o hardware do host?
 3. A primeira entrega pode ser a festa com fila/vídeo, deixando pontuação automática para a etapa seguinte?
 
 ## Execução atual
 
-- `docker compose up -d --build` inicia `app` e `worker`. `docker compose ps` mostra o projeto `karaoke`; `http://localhost:8000/health` retorna `{"status":"ok"}`. A interface inicial do celular está em `http://localhost:8000/cantor` no host, ou `http://IP_DO_HOST:8000/cantor` na mesma rede após conferir firewall/Wi-Fi. Ainda não existe interface da TV.
-- API inicial: `POST /api/clients` recebe `{"name":"Nome"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"youtubeCode":"glvVYIhdWlU"}` com `Authorization: Bearer TOKEN` (não recebe URL inteira); `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. Pedidos prontos têm JPEG em `GET /api/requests/{id}/preview` (mesmo cabeçalho Bearer). O worker processa pedidos pendentes; não há fila de reprodução nem reset implementados ainda. Rodar testes sem baixar vídeos externos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
-- A porta pode ser alterada com `KARAOKE_PORT` no ambiente; `KARAOKE_ALLOW_SKIP=false` desliga o pulo. O celular usa `ws` nesta fase; o microfone exigirá HTTPS confiável e `wss` depois. Pedidos em fila/processamento/prontos têm posição; pedidos com falha não. O dono remove antes do aceite com `DELETE /api/requests/{id}` após confirmação. Durante convite ativo, `POST /api/requests/{id}/accept` aceita só o dono; `POST /api/requests/{id}/skip` pode ser solicitado por qualquer cliente autenticado, com confirmação no celular e cinco segundos antes da transição. Ainda não há `app-tv` para iniciar convites ou interromper reprodução; campos de recorde permanecem vazios até existir pontuação.
+- No Windows host, executar `./start.ps1` no PowerShell: ele detecta o IP Wi-Fi, inicia `app`, `tv` e `worker` e mostra os endereços. Abrir **`http://localhost:8001/tv`** no PC conectado à TV por HDMI, sem senha; celulares entram exclusivamente pelo QR. A porta 8001 é ligada a `127.0.0.1`, não à LAN. `Ctrl+Alt+N` apaga a festa atual: usar apenas quando quiser recomeçar.
+- API inicial: `POST /api/clients` recebe `{"name":"Nome","party":"GERAÇÃO_DO_QR"}` e retorna `client_id` e token; `POST /api/requests` recebe `{"youtubeCode":"glvVYIhdWlU"}` com `Authorization: Bearer TOKEN` (não recebe URL inteira); `GET /api/requests` lista os estados `pending`, `processing`, `ready` e `failed`. Pedidos prontos têm JPEG em `GET /api/requests/{id}/preview`. O worker prepara pedidos da festa atual; se faltar MP4 em um pedido antigo `ready`, ele volta para `pending` sem perder posição. Rodar testes sem baixar vídeos externos com `docker compose run --rm --no-deps app python -m unittest discover -s tests -v`.
+- `KARAOKE_ALLOW_SKIP=false` desliga o pulo. O celular usa `ws` nesta fase; o microfone exigirá HTTPS confiável e `wss` depois. Pedidos em fila/processamento/prontos têm posição; pedidos com falha não. O dono remove antes do aceite com `DELETE /api/requests/{id}`; durante convite ativo, só o dono aceita, e qualquer cliente autenticado pode pedir pulo com cinco segundos de contagem. Recordes permanecem vazios até existir pontuação.

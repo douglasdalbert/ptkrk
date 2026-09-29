@@ -1,4 +1,6 @@
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
 websockets>=13,<17
+qrcode[pil]>=8,<9
+httpx>=0.27,<1
 yt-dlp>=2025.1,<2027

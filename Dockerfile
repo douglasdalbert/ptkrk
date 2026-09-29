@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY app-cantor ./app-cantor
+COPY app-tv ./app-tv
 COPY tests ./tests
 
 EXPOSE 8000

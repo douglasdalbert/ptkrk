@@ -5,6 +5,7 @@ services:
     build: .
     environment:
       KARAOKE_ALLOW_SKIP: ${KARAOKE_ALLOW_SKIP:-true}
+      KARAOKE_LAN_IP: ${KARAOKE_LAN_IP:-}
     ports:
       - "${KARAOKE_PORT:-8000}:8000"
     volumes:
@@ -22,6 +23,18 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  tv:
+    build: .
+    environment:
+      KARAOKE_TV_LOCAL: "true"
+      KARAOKE_LAN_IP: ${KARAOKE_LAN_IP:-}
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - db_data:/data
+      - media_data:/media
+    restart: unless-stopped
 
   worker:
     build: .

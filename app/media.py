@@ -9,8 +9,8 @@ MAX_DURATION_SECONDS = 12 * 60
 MAX_FILE_BYTES = 300 * 1024 * 1024
 
 
-def download_video(video_id: str) -> str:
-    directory = MEDIA_ROOT / "videos"
+def download_video(video_id: str, generation: str | None = None) -> str:
+    directory = MEDIA_ROOT / generation / "videos" if generation else MEDIA_ROOT / "videos"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{video_id}.mp4"
     cached = target.is_file()
@@ -52,9 +52,10 @@ def check_size(progress: dict) -> None:
         raise ValueError("Vídeo ultrapassou 300 MB")
 
 
-def create_preview(video_id: str) -> None:
-    video = MEDIA_ROOT / "videos" / f"{video_id}.mp4"
-    preview = MEDIA_ROOT / "previews" / f"{video_id}.jpg"
+def create_preview(video_id: str, generation: str | None = None) -> None:
+    root = MEDIA_ROOT / generation if generation else MEDIA_ROOT
+    video = root / "videos" / f"{video_id}.mp4"
+    preview = root / "previews" / f"{video_id}.jpg"
     preview.parent.mkdir(parents=True, exist_ok=True)
     if preview.is_file():
         return

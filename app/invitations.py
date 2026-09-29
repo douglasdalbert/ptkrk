@@ -85,8 +85,8 @@ def accept_invitation(database: sqlite3.Connection, request_id: str, client_id: 
         return False
     if skip_state(database):
         return False
-    owner = database.execute("SELECT client_id FROM requests WHERE id = ?", (request_id,)).fetchone()
-    if owner is None or owner["client_id"] != client_id:
+    owner = database.execute("SELECT client_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
+    if owner is None or owner["client_id"] != client_id or owner["status"] != "ready":
         return False
     database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
     database.execute(
@@ -94,4 +94,19 @@ def accept_invitation(database: sqlite3.Connection, request_id: str, client_id: 
            ON CONFLICT(client_id) DO UPDATE SET total = total + 1""",
         (client_id,),
     )
+    return True
+
+
+def finish_song(database: sqlite3.Connection, request_id: str, now: float) -> bool:
+    current = invitation_state(database)
+    if current is None or current["request_id"] != request_id or not current["accepted"] or skip_state(database):
+        return False
+    database.execute("UPDATE requests SET status = 'played' WHERE id = ?", (request_id,))
+    database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
+    for position, row in enumerate(database.execute(
+        "SELECT request_id FROM ready_queue ORDER BY position"
+    ).fetchall(), start=1):
+        database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row["request_id"]))
+    database.execute("DELETE FROM invitation WHERE id = 1")
+    start_invitation(database, now)
     return True

@@ -4,7 +4,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from fastapi import HTTPException
 
@@ -12,7 +12,7 @@ from app.main import NewRequest, create_request, remove_request, request_preview
 from app.media import create_preview
 from app.queue import enqueue_request
 from app.storage import connection, initialize
-from app.worker import process_next
+from app.worker import process_next, recover_missing_media
 
 
 class YoutubeCodeTests(unittest.TestCase):
@@ -62,8 +62,8 @@ class WorkerTests(unittest.TestCase):
             "app.worker.create_preview"
         ) as preview:
             self.assertTrue(process_next())
-        download.assert_called_once_with("dQw4w9WgXcQ")
-        preview.assert_called_once_with("dQw4w9WgXcQ")
+        download.assert_called_once_with("dQw4w9WgXcQ", ANY)
+        preview.assert_called_once_with("dQw4w9WgXcQ", download.call_args.args[1])
         with connection() as database:
             row = database.execute("SELECT status, title FROM requests WHERE id = 'request'").fetchone()
         self.assertEqual((row["status"], row["title"]), ("ready", "Minha música"))
@@ -82,8 +82,10 @@ class WorkerTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as missing:
                 request_preview("request", "client")
             self.assertEqual(missing.exception.status_code, 404)
-            preview = Path(self.directory.name) / "previews" / "dQw4w9WgXcQ.jpg"
-            preview.parent.mkdir()
+            with connection() as database:
+                generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            preview = Path(self.directory.name) / generation / "previews" / "dQw4w9WgXcQ.jpg"
+            preview.parent.mkdir(parents=True)
             preview.write_bytes(b"preview")
             with connection() as database:
                 database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
@@ -101,8 +103,19 @@ class WorkerTests(unittest.TestCase):
             row = database.execute("SELECT video_id FROM requests WHERE id = ?", (created["id"],)).fetchone()
         self.assertEqual(row["video_id"], "glvVYIhdWlU")
 
+    def test_missing_ready_video_is_requeued_without_changing_position(self):
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status='ready' WHERE id='request'")
+            database.execute("INSERT INTO invitation(id, request_id, deadline) VALUES (1, 'request', 0)")
+            with patch("app.worker.MEDIA_ROOT", Path(self.directory.name)):
+                recover_missing_media(database, generation)
+            self.assertEqual(database.execute("SELECT status FROM requests WHERE id='request'").fetchone()[0], "pending")
+            self.assertEqual(database.execute("SELECT position FROM ready_queue WHERE request_id='request'").fetchone()[0], 1)
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM invitation").fetchone()[0], 0)
+
     def test_removal_during_download_cannot_restore_request(self):
-        def cancel_during_download(video_id):
+        def cancel_during_download(video_id, generation):
             remove_request("request", "client")
             return "Vídeo terminado"
 
@@ -140,7 +153,7 @@ class WorkerTests(unittest.TestCase):
             "app.worker.create_preview"
         ):
             self.assertTrue(process_next())
-            download.assert_called_once_with("glvVYIhdWlU")
+            download.assert_called_once_with("glvVYIhdWlU", ANY)
         with connection() as database:
             status = database.execute("SELECT status FROM requests WHERE id = 'request-11'").fetchone()[0]
         self.assertEqual(status, "ready")
@@ -160,7 +173,7 @@ class WorkerTests(unittest.TestCase):
             database.execute("INSERT INTO requests(id, client_id, video_id) VALUES ('A10', 'client', 'abcdefghijk')")
             enqueue_request(database, "A10")
 
-        def download(video_id):
+        def download(video_id, generation):
             if video_id == "abcdefghijk":
                 started.set()
                 if not finish.wait(5):

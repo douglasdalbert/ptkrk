@@ -5,15 +5,18 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from io import BytesIO
 from pathlib import Path
+import shutil
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import qrcode
 
-from app.invitations import accept_invitation, apply_skip, invitation_state, schedule_skip, skip_state, start_invitation
+from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
 from app.media import MEDIA_ROOT
 from app.queue import enqueue_request
 from app.storage import connection, initialize
@@ -35,18 +38,36 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Karaoke", lifespan=lifespan)
 SINGER_ROOT = Path(__file__).resolve().parent.parent / "app-cantor"
+TV_ROOT = Path(__file__).resolve().parent.parent / "app-tv"
 app.mount("/cantor/assets", StaticFiles(directory=SINGER_ROOT), name="cantor-assets")
+if os.getenv("KARAOKE_TV_LOCAL") == "true":
+    app.mount("/tv/assets", StaticFiles(directory=TV_ROOT), name="tv-assets")
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 subscribers: set[WebSocket] = set()
+tv_subscribers: set[WebSocket] = set()
+singer_subscribers: dict[WebSocket, str] = {}
 
 
 class NewClient(BaseModel):
     name: str = Field(min_length=1, max_length=60)
+    party: str
 
 
 class NewRequest(BaseModel):
     youtubeCode: str = Field(min_length=11, max_length=11)
+
+
+def authenticated_tv() -> None:
+    if os.getenv("KARAOKE_TV_LOCAL") != "true":
+        raise HTTPException(404, "TV indisponível")
+
+
+def tv_command(request: Request, marker: str | None = Header(default=None, alias="X-Karaoke-TV")) -> None:
+    authenticated_tv()
+    origin = request.headers.get("origin")
+    if marker != "local" or (origin and origin != str(request.base_url).rstrip("/")):
+        raise HTTPException(403, "Comando disponível somente na TV local")
 
 
 def youtube_id(code: str) -> str:
@@ -91,8 +112,9 @@ def party_snapshot() -> dict:
     with connection() as database:
         invitation = invitation_state(database)
         skipping = skip_state(database)
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
     return {"type": "requests", "items": request_snapshot(), "invitation": invitation,
-            "skip": skipping, "allow_skip": skip_enabled()}
+            "skip": skipping, "allow_skip": skip_enabled(), "party": generation}
 
 
 def skip_enabled() -> bool:
@@ -106,6 +128,8 @@ async def watch_requests() -> None:
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             apply_skip(database, time.time())
+            if tv_subscribers:
+                start_invitation(database, time.time())
         if not subscribers:
             previous = party_snapshot()
             continue
@@ -114,9 +138,15 @@ async def watch_requests() -> None:
             previous = current
             for subscriber in tuple(subscribers):
                 try:
+                    if singer_subscribers.get(subscriber) not in (None, current["party"]):
+                        await subscriber.close(code=1008)
+                        subscribers.discard(subscriber)
+                        singer_subscribers.pop(subscriber, None)
+                        continue
                     await subscriber.send_json(current)
                 except (WebSocketDisconnect, RuntimeError, OSError):
                     subscribers.discard(subscriber)
+                    singer_subscribers.pop(subscriber, None)
 
 
 @app.websocket("/ws/requests")
@@ -125,9 +155,21 @@ async def requests_socket(websocket: WebSocket) -> None:
     try:
         message = await asyncio.wait_for(websocket.receive_json(), timeout=5)
         token = message.get("token") if isinstance(message, dict) else None
-        if not isinstance(token, str) or client_for_token(token) is None:
+        is_tv = os.getenv("KARAOKE_TV_LOCAL") == "true"
+        if is_tv and websocket.headers.get("origin") != f"http://{websocket.headers.get('host')}":
             await websocket.close(code=1008)
             return
+        if not is_tv and (not isinstance(token, str) or client_for_token(token) is None):
+            await websocket.close(code=1008)
+            return
+        if is_tv:
+            tv_subscribers.add(websocket)
+            with connection() as database:
+                database.execute("BEGIN IMMEDIATE")
+                start_invitation(database, time.time())
+        else:
+            with connection() as database:
+                singer_subscribers[websocket] = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         await websocket.send_json(party_snapshot())
         subscribers.add(websocket)
         while True:
@@ -136,6 +178,8 @@ async def requests_socket(websocket: WebSocket) -> None:
         pass
     finally:
         subscribers.discard(websocket)
+        tv_subscribers.discard(websocket)
+        singer_subscribers.pop(websocket, None)
 
 
 
@@ -149,6 +193,90 @@ def singer_page() -> FileResponse:
     return FileResponse(SINGER_ROOT / "index.html")
 
 
+@app.get("/tv", include_in_schema=False)
+def tv_page(_: None = Depends(authenticated_tv)) -> FileResponse:
+    return FileResponse(TV_ROOT / "index.html")
+
+
+@app.get("/api/tv/state", dependencies=[Depends(authenticated_tv)])
+def tv_state() -> dict:
+    return party_snapshot()
+
+
+@app.post("/api/tv/reset", dependencies=[Depends(tv_command)])
+def tv_reset() -> dict[str, str]:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        previous = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        generation = str(uuid4())
+        database.execute("UPDATE party SET generation=? WHERE id=1", (generation,))
+        for table in ("skip_request", "invitation", "missed_invitations", "ready_queue",
+                      "accepted_counts", "requests", "clients"):
+            database.execute(f"DELETE FROM {table}")
+    shutil.rmtree(MEDIA_ROOT / previous, ignore_errors=True)
+    for directory in (MEDIA_ROOT / "videos", MEDIA_ROOT / "previews"):
+        shutil.rmtree(directory, ignore_errors=True)
+    return {"party": generation}
+
+
+@app.post("/api/tv/start", dependencies=[Depends(tv_command)])
+def tv_start() -> dict:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        invitation = start_invitation(database, time.time())
+    return {"invitation": invitation}
+
+
+@app.post("/api/tv/{request_id}/finish", dependencies=[Depends(tv_command)])
+def tv_finish(request_id: str) -> dict:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        if not finish_song(database, request_id, time.time()):
+            raise HTTPException(409, "Música não está em apresentação")
+    return {"status": "played"}
+
+
+@app.get("/api/tv/{request_id}/{kind}", dependencies=[Depends(authenticated_tv)])
+def tv_media(request_id: str, kind: str) -> FileResponse:
+    if kind not in {"video", "preview"}:
+        raise HTTPException(404, "Mídia indisponível")
+    with connection() as database:
+        item = database.execute("SELECT video_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)).fetchone()
+    if item is None:
+        raise HTTPException(404, "Mídia indisponível")
+    with connection() as database:
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+    media = MEDIA_ROOT / generation / ("videos" if kind == "video" else "previews") / (
+        item["video_id"] + (".mp4" if kind == "video" else ".jpg")
+    )
+    if not media.is_file():
+        raise HTTPException(404, "Mídia indisponível")
+    return FileResponse(media, media_type="video/mp4" if kind == "video" else "image/jpeg")
+
+
+def singer_address(request: Request) -> str:
+    address = os.getenv("KARAOKE_LAN_IP", "")
+    if not address:
+        raise HTTPException(503, "Inicie com start.ps1 para detectar o IP da rede")
+    with connection() as database:
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+    return f"http://{address}:8000/cantor?party={generation}"
+
+
+@app.get("/api/tv/join", dependencies=[Depends(authenticated_tv)])
+def tv_join(request: Request) -> dict[str, str]:
+    return {"url": singer_address(request)}
+
+
+@app.get("/api/tv/qr", dependencies=[Depends(authenticated_tv)])
+def tv_qr(request: Request) -> StreamingResponse:
+    image = qrcode.make(singer_address(request))
+    output = BytesIO()
+    image.save(output, format="PNG")
+    output.seek(0)
+    return StreamingResponse(output, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/clients", status_code=201)
 def create_client(payload: NewClient) -> dict[str, str]:
     name = payload.name.strip()
@@ -157,6 +285,10 @@ def create_client(payload: NewClient) -> dict[str, str]:
     client_id = str(uuid4())
     token = secrets.token_urlsafe(32)
     with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        if payload.party != generation:
+            raise HTTPException(410, "Festa encerrada. Leia o novo QR na TV")
         database.execute(
             "INSERT INTO clients (id, name, session_hash) VALUES (?, ?, ?)",
             (client_id, name, hashlib.sha256(token.encode()).hexdigest()),
@@ -238,7 +370,9 @@ def request_preview(request_id: str, client_id: str = Depends(authenticated_clie
         ).fetchone()
     if request is None:
         raise HTTPException(404, "Prévia indisponível")
-    preview = MEDIA_ROOT / "previews" / f"{request['video_id']}.jpg"
+    with connection() as database:
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+    preview = MEDIA_ROOT / generation / "previews" / f"{request['video_id']}.jpg"
     if not preview.is_file():
         raise HTTPException(404, "Prévia indisponível")
     return FileResponse(preview, media_type="image/jpeg")

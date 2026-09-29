@@ -1,5 +1,8 @@
 import os
 import sqlite3
+from uuid import uuid4
+
+from app.media import MEDIA_ROOT
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -66,9 +69,25 @@ def initialize() -> None:
                 request_id TEXT NOT NULL REFERENCES requests(id),
                 deadline REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS party (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                generation TEXT NOT NULL
+            );
             """
         )
         database.execute("BEGIN IMMEDIATE")
+        database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
+        generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        for category in ("videos", "previews"):
+            legacy = MEDIA_ROOT / category
+            if legacy.is_dir():
+                destination = MEDIA_ROOT / generation / category
+                destination.mkdir(parents=True, exist_ok=True)
+                for file in legacy.iterdir():
+                    if file.is_file() and not (destination / file.name).exists():
+                        file.rename(destination / file.name)
+                if not any(legacy.iterdir()):
+                    legacy.rmdir()
         queued = {row[0] for row in database.execute("SELECT request_id FROM ready_queue")}
         position = database.execute("SELECT COALESCE(MAX(position), 0) FROM ready_queue").fetchone()[0]
         for row in database.execute(

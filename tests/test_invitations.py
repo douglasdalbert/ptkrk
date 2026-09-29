@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.invitations import accept_invitation, apply_skip, invitation_state, schedule_skip, skip_state, start_invitation
+from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
 from app.main import accept_request, party_snapshot, remove_request, skip_request
 from app.queue import enqueue_request
 from app.storage import connection, initialize
@@ -66,6 +66,17 @@ class InvitationTests(unittest.TestCase):
             self.assertEqual(database.execute("SELECT status FROM requests WHERE id='A1'").fetchone()[0], "skipped")
             self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE client_id='A'").fetchone()[0], 1)
         self.assertNotIn("A1", [item["id"] for item in party_snapshot()["items"]])
+
+    def test_finish_accepted_song_advances_once(self):
+        with connection() as database:
+            start_invitation(database, 100)
+            self.assertFalse(finish_song(database, "A1", 101))
+            self.assertTrue(accept_invitation(database, "A1", "A", 101))
+            self.assertTrue(finish_song(database, "A1", 150))
+            self.assertFalse(finish_song(database, "A1", 151))
+            self.assertEqual(self.order(database), ["B1", "C1", "A2"])
+            self.assertEqual(invitation_state(database)["request_id"], "B1")
+            self.assertEqual(database.execute("SELECT status FROM requests WHERE id='A1'").fetchone()[0], "played")
 
     def test_only_owner_can_accept_once_without_auto_deadline(self):
         with connection() as database:

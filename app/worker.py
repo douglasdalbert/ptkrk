@@ -1,17 +1,27 @@
 import logging
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from app.media import create_preview, download_video
+from app.media import MEDIA_ROOT, create_preview, download_video
 from app.storage import connection, initialize
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def recover_missing_media(database, generation: str) -> None:
+    for item in database.execute("SELECT id, video_id FROM requests WHERE status = 'ready'").fetchall():
+        if not (MEDIA_ROOT / generation / "videos" / f"{item['video_id']}.mp4").is_file():
+            database.execute("UPDATE requests SET status = 'pending' WHERE id = ?", (item["id"],))
+            database.execute("DELETE FROM skip_request WHERE request_id = ?", (item["id"],))
+            database.execute("DELETE FROM invitation WHERE request_id = ?", (item["id"],))
+
+
 def process_next() -> bool:
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
+        generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         item = database.execute(
             """SELECT requests.id, requests.video_id FROM requests
                JOIN ready_queue ON ready_queue.request_id = requests.id
@@ -25,15 +35,16 @@ def process_next() -> bool:
         database.execute("UPDATE requests SET status = 'processing' WHERE id = ?", (item["id"],))
 
     try:
-        title = download_video(item["video_id"])
-        create_preview(item["video_id"])
+        title = download_video(item["video_id"], generation)
+        create_preview(item["video_id"], generation)
     except Exception:
         logger.exception("Falha ao preparar vídeo %s", item["video_id"])
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             updated = database.execute(
-                "UPDATE requests SET status = 'failed', error = ? WHERE id = ? AND status = 'processing'",
-                ("Não foi possível baixar/preparar este vídeo", item["id"]),
+                "UPDATE requests SET status = 'failed', error = ? WHERE id = ? AND status = 'processing' "
+                "AND ? = (SELECT generation FROM party WHERE id=1)",
+                ("Não foi possível baixar/preparar este vídeo", item["id"], generation),
             )
             if updated.rowcount:
                 database.execute("DELETE FROM ready_queue WHERE request_id = ?", (item["id"],))
@@ -44,9 +55,14 @@ def process_next() -> bool:
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             database.execute(
-                "UPDATE requests SET status = 'ready', title = ? WHERE id = ? AND status = 'processing'",
-                (title, item["id"]),
+                "UPDATE requests SET status = 'ready', title = ? WHERE id = ? AND status = 'processing' "
+                "AND ? = (SELECT generation FROM party WHERE id=1)",
+                (title, item["id"], generation),
             )
+    with connection() as database:
+        current = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+    if current != generation:
+        shutil.rmtree(MEDIA_ROOT / generation, ignore_errors=True)
     return True
 
 
@@ -54,6 +70,11 @@ def main() -> None:
     initialize()
     with connection() as database:
         database.execute("UPDATE requests SET status = 'pending' WHERE status = 'processing'")
+        generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        recover_missing_media(database, generation)
+    for directory in MEDIA_ROOT.iterdir():
+        if directory.is_dir() and directory.name not in {generation, "videos", "previews"}:
+            shutil.rmtree(directory, ignore_errors=True)
     with ThreadPoolExecutor(max_workers=2) as executor:
         active = set()
         while True:

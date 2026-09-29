@@ -1,6 +1,7 @@
 import { ConfirmDialog } from "./confirm-dialog.js";
 
 const storageKey = "karaoke.singer";
+const party = new URLSearchParams(location.search).get("party");
 const entry = document.querySelector("#entry");
 const sessionView = document.querySelector("#session");
 const connectionLabel = document.querySelector("#connection");
@@ -73,6 +74,10 @@ function clearSession() {
 }
 
 function showSession(identity) {
+  if (!party || identity.party !== party) {
+    clearSession();
+    return;
+  }
   singer = identity;
   entry.hidden = true;
   sessionView.hidden = false;
@@ -114,6 +119,12 @@ function connect() {
     if (current !== socket) return;
     const message = JSON.parse(event.data);
     if (message.type === "requests") {
+      if (message.party !== party) {
+        clearSession();
+        document.querySelector("#entry-error").textContent = "Festa encerrada. Leia o novo QR na TV.";
+        document.querySelector("#entry-error").hidden = false;
+        return;
+      }
       reconnectDelay = 1000;
       connectionState("Ao vivo", true);
       renderInvitation(message.invitation, message.items);
@@ -126,7 +137,7 @@ function connect() {
     socket = null;
     if (event.code === 1008) {
       clearSession();
-      document.querySelector("#entry-error").textContent = "Sessão inválida. Entre novamente.";
+      document.querySelector("#entry-error").textContent = "Festa encerrada. Leia o novo QR na TV.";
       document.querySelector("#entry-error").hidden = false;
       return;
     }
@@ -299,10 +310,12 @@ entryForm.addEventListener("submit", async (event) => {
   button.disabled = true;
   error.hidden = true;
   try {
+    if (!party) throw new Error("Leia o QR da festa na TV para entrar.");
     const identity = await api("/api/clients", {
       method: "POST",
-      body: JSON.stringify({ name: entryForm.elements.name.value.trim() }),
+      body: JSON.stringify({ name: entryForm.elements.name.value.trim(), party }),
     });
+    identity.party = party;
     localStorage.setItem(storageKey, JSON.stringify(identity));
     showSession(identity);
   } catch (problem) {
@@ -343,3 +356,7 @@ try {
   localStorage.removeItem(storageKey);
 }
 if (!singer) connectionState("Aguardando");
+if (!party) {
+  document.querySelector("#entry-error").textContent = "Leia o QR da festa na TV para entrar.";
+  document.querySelector("#entry-error").hidden = false;
+}
