@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import re
 import secrets
 import time
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.invitations import accept_invitation, expire_invitation, invitation_state, start_invitation
+from app.invitations import accept_invitation, apply_skip, invitation_state, schedule_skip, skip_state, start_invitation
 from app.media import MEDIA_ROOT
 from app.queue import enqueue_request
 from app.storage import connection, initialize
@@ -78,7 +79,7 @@ def request_snapshot() -> list[dict]:
                  ready_queue.position AS position
                FROM requests JOIN clients ON clients.id = requests.client_id
              LEFT JOIN ready_queue ON ready_queue.request_id = requests.id
-             WHERE requests.status != 'removed'
+             WHERE requests.status NOT IN ('removed', 'skipped')
                  ORDER BY CASE WHEN ready_queue.position IS NOT NULL
                      THEN 0 ELSE 1 END,
                    ready_queue.position, requests.created_at, requests.rowid"""
@@ -89,7 +90,13 @@ def request_snapshot() -> list[dict]:
 def party_snapshot() -> dict:
     with connection() as database:
         invitation = invitation_state(database)
-    return {"type": "requests", "items": request_snapshot(), "invitation": invitation}
+        skipping = skip_state(database)
+    return {"type": "requests", "items": request_snapshot(), "invitation": invitation,
+            "skip": skipping, "allow_skip": skip_enabled()}
+
+
+def skip_enabled() -> bool:
+    return os.getenv("KARAOKE_ALLOW_SKIP", "true").lower() in {"true", "1", "yes"}
 
 
 async def watch_requests() -> None:
@@ -98,7 +105,7 @@ async def watch_requests() -> None:
         await asyncio.sleep(1)
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
-            expire_invitation(database, time.time())
+            apply_skip(database, time.time())
         if not subscribers:
             previous = party_snapshot()
             continue
@@ -181,10 +188,21 @@ def accept_request(request_id: str, client_id: str = Depends(authenticated_clien
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         now = time.time()
-        expire_invitation(database, now)
         if not accept_invitation(database, request_id, client_id, now):
-            raise HTTPException(409, "Convite indisponível, vencido ou de outra pessoa")
+            raise HTTPException(409, "Convite indisponível ou de outra pessoa")
     return {"status": "accepted"}
+
+
+@app.post("/api/requests/{request_id}/skip", status_code=202)
+def skip_request(request_id: str, client_id: str = Depends(authenticated_client)) -> dict:
+    if not skip_enabled():
+        raise HTTPException(403, "Pular música está desativado")
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        skipping = schedule_skip(database, request_id, time.time())
+        if skipping is None:
+            raise HTTPException(409, "Esta música não está em uso ou já está sendo pulada")
+    return skipping
 
 
 @app.delete("/api/requests/{request_id}", status_code=204)
@@ -207,6 +225,7 @@ def remove_request(request_id: str, client_id: str = Depends(authenticated_clien
         for position, row in enumerate(rows, start=1):
             database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row["request_id"]))
         if invite and invite["request_id"] == request_id:
+            database.execute("DELETE FROM skip_request WHERE id = 1")
             database.execute("DELETE FROM invitation WHERE id = 1")
             start_invitation(database, time.time())
 

@@ -48,6 +48,11 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .invitation strong { color: var(--lime); font-family: Georgia, serif; font-size: 32px; }
 .invitation .primary { width: 100%; }
 .invitation #invitation-message { min-height: 15px; margin: 8px 0 0; }
+.skipping { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 18px; padding: 16px; border: 1px solid var(--pink); color: var(--pink); font-size: 15px; }
+.skipping span { font-family: Georgia, serif; font-size: 28px; }
+.skip-action { padding: 0 0 14px; }
+.skip-action .text-button { color: var(--pink); }
+.skip-action p { margin: 3px 0; color: var(--pink); font-size: 12px; }
 .text-button { background: transparent; color: var(--muted); border: 0; text-decoration: underline; padding: 4px 0; white-space: nowrap; font-size: 12px; }
 .request-form { padding: 20px 0 12px; border-top: 1px solid var(--border); }
 .request-form label { display: block; margin-bottom: 12px; }

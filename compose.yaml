@@ -3,6 +3,8 @@ name: karaoke
 services:
   app:
     build: .
+    environment:
+      KARAOKE_ALLOW_SKIP: ${KARAOKE_ALLOW_SKIP:-true}
     ports:
       - "${KARAOKE_PORT:-8000}:8000"
     volumes:

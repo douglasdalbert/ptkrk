@@ -61,6 +61,11 @@ def initialize() -> None:
                 request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
                 total INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS skip_request (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                request_id TEXT NOT NULL REFERENCES requests(id),
+                deadline REAL NOT NULL
+            );
             """
         )
         database.execute("BEGIN IMMEDIATE")

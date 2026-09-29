@@ -16,11 +16,12 @@ export class ConfirmDialog {
     document.body.append(this.dialog);
   }
 
-  async open({ title, message, preview }) {
+  async open({ title, message, preview, confirmLabel = "Remover música" }) {
     const dialog = this.dialog;
     const version = ++this.version;
     dialog.querySelector("h2").textContent = title;
     dialog.querySelector("p").textContent = message;
+    dialog.querySelector("button[value=confirm]").textContent = confirmLabel;
     const image = dialog.querySelector("img");
     image.hidden = true;
     image.removeAttribute("src");

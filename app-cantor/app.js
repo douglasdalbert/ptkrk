@@ -11,11 +11,16 @@ const previewCache = new Map();
 const invitationView = document.querySelector("#invitation");
 const acceptButton = document.querySelector("#accept-button");
 const confirmDialog = new ConfirmDialog();
+const skippingView = document.querySelector("#skipping");
+const skipAction = document.querySelector("#skip-action");
+const skipButton = document.querySelector("#skip-button");
 let singer = null;
 let socket = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 let currentInvitation = null;
+let currentSkip = null;
+let currentSong = null;
 
 function connectionState(text, online = false) {
   connectionLabel.textContent = text;
@@ -48,7 +53,11 @@ function youtubeCode(input) {
 function clearSession() {
   singer = null;
   currentInvitation = null;
+  currentSkip = null;
+  currentSong = null;
   invitationView.hidden = true;
+  skippingView.hidden = true;
+  skipAction.hidden = true;
   localStorage.removeItem(storageKey);
   clearTimeout(reconnectTimer);
   socket?.close();
@@ -109,6 +118,7 @@ function connect() {
       connectionState("Ao vivo", true);
       renderInvitation(message.invitation, message.items);
       renderRequests(message.items);
+      renderSkip(message);
     }
   });
   current.addEventListener("close", (event) => {
@@ -215,13 +225,6 @@ function renderRequests(items) {
   requestList.replaceChildren(content);
 }
 
-function updateInvitationClock() {
-  if (!currentInvitation || currentInvitation.accepted) return;
-  const seconds = Math.max(0, Math.ceil((currentInvitation.deadline_ms - Date.now()) / 1000));
-  document.querySelector("#invitation-clock").textContent = `${seconds}s`;
-  acceptButton.disabled = seconds === 0;
-}
-
 function renderInvitation(invitation, items) {
   if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id && item.client_id === singer.client_id)) {
     currentInvitation = null;
@@ -233,14 +236,49 @@ function renderInvitation(invitation, items) {
   invitationView.hidden = false;
   const item = items.find((request) => request.id === invitation.request_id);
   document.querySelector("#invitation-song").textContent = item.title || item.video_id;
-  document.querySelector("#invitation-clock").hidden = invitation.accepted;
   acceptButton.hidden = invitation.accepted;
+  acceptButton.disabled = false;
   document.querySelector("#invitation-message").textContent = invitation.accepted ? "Confirmado. Aguarde a TV." : "";
-  if (!invitation.accepted) updateInvitationClock();
   if (isNew && !invitation.accepted && "vibrate" in navigator) navigator.vibrate([250, 150, 250]);
 }
 
-setInterval(updateInvitationClock, 250);
+function renderSkip(message) {
+  currentSkip = message.skip;
+  currentSong = message.items.find((item) => item.id === message.invitation?.request_id) || null;
+  skippingView.hidden = !currentSkip;
+  skipAction.hidden = !message.allow_skip || !currentSong;
+  skipButton.disabled = !!currentSkip;
+  if (currentInvitation && !currentInvitation.accepted) acceptButton.disabled = !!currentSkip;
+  if (!currentSkip) document.querySelector("#skip-message").textContent = "";
+  updateSkipClock();
+}
+
+function updateSkipClock() {
+  if (!currentSkip) return;
+  const seconds = Math.max(0, Math.ceil((currentSkip.deadline_ms - Date.now()) / 1000));
+  document.querySelector("#skip-clock").textContent = `${seconds}s`;
+}
+
+setInterval(updateSkipClock, 250);
+
+skipButton.addEventListener("click", async () => {
+  if (!currentSong || currentSkip) return;
+  const requestId = currentSong.id;
+  const confirmed = await confirmDialog.open({
+    title: "Pular música?",
+    message: `Quer pular "${currentSong.title || currentSong.video_id}"? A próxima começa em 5 segundos.`,
+    preview: previewCache.get(currentSong.video_id)?.task?.then(() => previewCache.get(currentSong.video_id)?.url),
+    confirmLabel: "Pular música",
+  });
+  if (!confirmed) return;
+  skipButton.disabled = true;
+  try {
+    await api(`/api/requests/${encodeURIComponent(requestId)}/skip`, { method: "POST" });
+  } catch (problem) {
+    document.querySelector("#skip-message").textContent = problem.message;
+    skipButton.disabled = false;
+  }
+});
 
 acceptButton.addEventListener("click", async () => {
   if (!currentInvitation || currentInvitation.accepted) return;
@@ -250,7 +288,7 @@ acceptButton.addEventListener("click", async () => {
     document.querySelector("#invitation-message").textContent = "Confirmado. Aguarde a TV.";
   } catch (problem) {
     document.querySelector("#invitation-message").textContent = problem.message;
-    updateInvitationClock();
+    acceptButton.disabled = false;
   }
 });
 

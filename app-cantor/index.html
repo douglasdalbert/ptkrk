@@ -33,6 +33,10 @@
             <button id="sign-out" class="text-button" type="button">Trocar pessoa</button>
           </div>
 
+          <section id="skipping" class="skipping" role="status" hidden>
+            <strong>Pulando música</strong><span id="skip-clock"></span>
+          </section>
+
           <section id="invitation" class="invitation" aria-labelledby="invitation-title" hidden>
             <p class="eyebrow">SUA VEZ</p>
             <div class="invitation-row">
@@ -40,11 +44,15 @@
                 <h2 id="invitation-title">Hora de cantar</h2>
                 <p id="invitation-song"></p>
               </div>
-              <strong id="invitation-clock" aria-label="Segundos restantes"></strong>
             </div>
             <button id="accept-button" class="primary" type="button">OK, vou cantar</button>
             <p id="invitation-message" role="status"></p>
           </section>
+
+          <div id="skip-action" class="skip-action" hidden>
+            <button id="skip-button" class="text-button" type="button">Pular música em uso</button>
+            <p id="skip-message" role="status"></p>
+          </div>
 
           <form id="request-form" class="request-form">
             <label for="video-url">Peça uma música</label>
