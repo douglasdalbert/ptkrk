@@ -14,7 +14,8 @@
       <div class="screen">
         <video id="video" playsinline preload="metadata"></video>
         <div id="video-overlay" hidden>
-          <div class="track" id="track"><span>♫</span></div>
+          <div class="track" id="track" aria-live="off" hidden><span id="lyric-text"></span></div>
+          <div id="live-score" hidden></div>
           <button id="play" type="button" hidden>Reproduzir</button>
         </div>
         <div id="intermission">

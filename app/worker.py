@@ -3,6 +3,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from app.captions import create_caption_bars
 from app.media import MEDIA_ROOT, create_preview, download_video, remove_unused_media
 from app.storage import connection, initialize
 
@@ -12,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 def recover_missing_media(database, generation: str) -> None:
     for item in database.execute("SELECT id, video_id FROM requests WHERE status = 'ready'").fetchall():
-        if not (MEDIA_ROOT / generation / "videos" / f"{item['video_id']}.mp4").is_file():
+        video = MEDIA_ROOT / generation / "videos" / f"{item['video_id']}.mp4"
+        if not video.is_file():
             database.execute("UPDATE requests SET status = 'pending' WHERE id = ?", (item["id"],))
             database.execute("DELETE FROM skip_request WHERE request_id = ?", (item["id"],))
             database.execute("DELETE FROM invitation WHERE request_id = ?", (item["id"],))
@@ -37,6 +39,10 @@ def process_next() -> bool:
     try:
         title = download_video(item["video_id"], generation)
         create_preview(item["video_id"], generation)
+        try:
+            create_caption_bars(item["video_id"], generation)
+        except Exception:
+            logger.exception("Não foi possível preparar a legenda de %s", item["video_id"])
     except Exception as error:
         logger.exception("Falha ao preparar vídeo %s", item["video_id"])
         reason = str(error) if isinstance(error, ValueError) else "Não foi possível baixar/preparar este vídeo"

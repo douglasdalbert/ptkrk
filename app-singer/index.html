@@ -42,9 +42,9 @@
             <p id="request-message" class="message" role="status"></p>
           </form>
 
-          <div class="scores" aria-label="Recordes">
-            <div><span>SEU RECORDE</span><strong>—</strong></div>
-            <div><span>RECORDE GERAL</span><strong>—</strong></div>
+          <div class="scores" aria-label="Pontuação da apresentação">
+            <div><span>PONTOS DA MÚSICA</span><strong id="song-points">—</strong></div>
+            <div><span>RANKING</span><strong id="song-rank">— / 1000</strong></div>
           </div>
 
           <section class="requests" aria-labelledby="requests-title">
@@ -59,6 +59,8 @@
     <dialog id="singing-overlay" class="singing-overlay" aria-labelledby="singing-title">
       <span class="singing-note" aria-hidden="true">♫</span>
       <strong id="singing-title">Você está cantando</strong>
+      <p id="score-status" role="status">Ative o microfone para começar a pontuar.</p>
+      <button id="microphone-button" class="primary" type="button">Ativar microfone</button>
     </dialog>
     <footer id="action-footer" class="action-footer" hidden>
       <div class="footer-inner">

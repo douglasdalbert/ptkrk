@@ -6,14 +6,20 @@ const overlay = document.querySelector("#video-overlay");
 const playButton = document.querySelector("#play");
 const error = document.querySelector("#error");
 const connectionStatus = document.querySelector("#connect-status");
+const lyricTrack = document.querySelector("#track");
+const lyricText = document.querySelector("#lyric-text");
+const liveScore = document.querySelector("#live-score");
 let socket;
 let retryTimer;
 let activeId = null;
+let playbackSyncTimer = null;
 let finishing = false;
 let skip = null;
 let barPosition = 1;
 let colorIndex = 0;
 let party = null;
+let captionBars = [];
+let activeCaptionBar = -1;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
 const confirmDialog = new ConfirmDialog();
 
@@ -37,17 +43,42 @@ async function command(path, options = {}) {
 
 function stopPlayback() {
   activeId = null;
+  clearInterval(playbackSyncTimer);
+  playbackSyncTimer = null;
   video.pause();
   video.removeAttribute("src");
   video.load();
   overlay.hidden = true;
+  lyricTrack.hidden = true;
+  lyricText.textContent = "";
+  liveScore.hidden = true;
+  liveScore.textContent = "";
+  captionBars = [];
+  activeCaptionBar = -1;
   playButton.hidden = true;
   document.querySelector("#intermission").hidden = false;
 }
 
 async function startPlayback(item) {
   activeId = item.id;
+  captionBars = [];
+  activeCaptionBar = -1;
+  lyricTrack.hidden = true;
+  lyricText.textContent = "";
+  liveScore.hidden = true;
+  liveScore.textContent = "";
   video.src = `/api/tv/${encodeURIComponent(item.id)}/video`;
+  loadCaptionBars(item.id);
+  clearInterval(playbackSyncTimer);
+  playbackSyncTimer = setInterval(() => {
+    if (socket?.readyState !== WebSocket.OPEN || !activeId) return;
+    socket.send(JSON.stringify({
+      type: "playback_sync",
+      request_id: activeId,
+      position_ms: Math.round(video.currentTime * 1000),
+      playing: !video.paused && !video.ended,
+    }));
+  }, 50);
   document.querySelector("#intermission").hidden = true;
   overlay.hidden = false;
   try {
@@ -56,6 +87,35 @@ async function startPlayback(item) {
   } catch {
     playButton.hidden = false;
   }
+}
+
+async function loadCaptionBars(requestId) {
+  try {
+    const response = await fetch(`/api/tv/${encodeURIComponent(requestId)}/captions`, {
+      credentials: "same-origin",
+    });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (activeId !== requestId) return;
+    captionBars = result.bars || [];
+    renderCaptionBar();
+  } catch {
+    captionBars = [];
+  }
+}
+
+function renderCaptionBar() {
+  const time = video.currentTime * 1000;
+  const index = captionBars.findIndex(bar => time >= bar.start_ms && time < bar.end_ms);
+  if (index === activeCaptionBar) return;
+  activeCaptionBar = index;
+  if (index < 0) {
+    lyricTrack.hidden = true;
+    lyricText.textContent = "";
+    return;
+  }
+  lyricText.textContent = captionBars[index].text;
+  lyricTrack.hidden = false;
 }
 
 function render(snapshot) {
@@ -125,7 +185,13 @@ function connect() {
   current.onmessage = event => {
     failed = false;
     setConnectionStatus("connected", "Conectado");
-    render(JSON.parse(event.data));
+    const message = JSON.parse(event.data);
+    if (message.type === "score_update") {
+      liveScore.textContent = `${message.name}: ${message.points.toFixed(1)} / ${message.ranking_max}`;
+      liveScore.hidden = false;
+      return;
+    }
+    if (message.type === "requests") render(message);
   };
   current.onerror = () => {
     if (socket !== current) return;
@@ -178,6 +244,7 @@ video.addEventListener("ended", async () => {
   } catch (problem) { error.textContent = problem.message; }
   finally { finishing = false; }
 });
+video.addEventListener("timeupdate", renderCaptionBar);
 
 document.addEventListener("keydown", event => {
   if (show.hidden || event.target instanceof HTMLInputElement) return;
@@ -194,17 +261,16 @@ document.addEventListener("keydown", event => {
 
 function moveTrack(direction) {
   barPosition = (barPosition + (direction > 0 ? 1 : 2)) % 3;
-  document.querySelector("#track").style.top = ["7%", "48%", "88%"][barPosition];
+  lyricTrack.style.top = ["7%", "48%", "88%"][barPosition];
 }
 
 document.querySelector("#move-track-action").addEventListener("click", () => moveTrack(1));
 
 function cycleColor() {
   colorIndex = (colorIndex + 1) % colors.length;
-  const track = document.querySelector("#track");
-  track.style.borderColor = colors[colorIndex];
-  track.style.color = colors[colorIndex];
-  track.style.backgroundColor = `${colors[colorIndex]}55`;
+  lyricTrack.style.borderColor = colors[colorIndex];
+  lyricTrack.style.color = colors[colorIndex];
+  lyricTrack.style.backgroundColor = `${colors[colorIndex]}55`;
 }
 
 async function resetParty() {

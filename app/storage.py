@@ -71,6 +71,23 @@ def initialize() -> None:
                 singer_id TEXT PRIMARY KEY REFERENCES singers(id) ON DELETE CASCADE,
                 total INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS song_scores (
+                request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                hit_blocks TEXT NOT NULL DEFAULT '[]',
+                penalties INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (request_id, singer_id)
+            );
+            CREATE TABLE IF NOT EXISTS score_events (
+                event_id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL,
+                block_index INTEGER,
+                offcue_window INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS invitation (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 request_id TEXT NOT NULL REFERENCES requests(id),
@@ -100,6 +117,8 @@ def initialize() -> None:
             database.execute("ALTER TABLE backvocals ADD COLUMN joined INTEGER NOT NULL DEFAULT 1")
         if "score_eligible" not in {row[1] for row in database.execute("PRAGMA table_info(backvocals)")}:
             database.execute("ALTER TABLE backvocals ADD COLUMN score_eligible INTEGER NOT NULL DEFAULT 1")
+        if "offcue_window" not in {row[1] for row in database.execute("PRAGMA table_info(score_events)")}:
+            database.execute("ALTER TABLE score_events ADD COLUMN offcue_window INTEGER")
         database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         for category in ("videos", "previews"):

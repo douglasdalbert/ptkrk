@@ -1,5 +1,6 @@
 import tempfile
 import time
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from app.invitations import start_invitation
+import app.main as main_module
 from app.main import app
 from app.queue import enqueue_request
 from app.storage import connection
@@ -49,13 +51,18 @@ class TvTests(unittest.TestCase):
         video = Path(self.directory.name) / generation / "videos" / "glvVYIhdWlU.mp4"
         video.parent.mkdir(parents=True)
         video.write_bytes(b"sample mp4")
+        captions = Path(self.directory.name) / generation / "captions" / "glvVYIhdWlU.json"
+        captions.parent.mkdir(parents=True)
+        captions.write_text('{"bars":[{"text":"Trecho","start_ms":0,"end_ms":1000}]}', encoding="utf-8")
         with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
             self.assertEqual(self.client.post("/api/tv/start").status_code, 404)
             self.assertEqual(self.client.get("/tv").status_code, 404)
             self.assertEqual(self.client.get("/api/tv/song/video").status_code, 404)
+            self.assertEqual(self.client.get("/api/tv/song/captions").status_code, 404)
         self.assertEqual(self.client.post("/api/tv/start").status_code, 403)
         self.assertEqual(self.client.post("/api/tv/start", headers=self.tv_headers).json()["invitation"]["request_id"], "song")
         self.assertEqual(self.client.get("/api/tv/song/video").content, b"sample mp4")
+        self.assertEqual(self.client.get("/api/tv/song/captions").json()["bars"][0]["text"], "Trecho")
         partial = self.client.get("/api/tv/song/video", headers={"Range": "bytes=0-3"})
         self.assertEqual(partial.status_code, 206)
         self.assertEqual(partial.content, b"samp")
@@ -65,6 +72,83 @@ class TvTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/tv/song/finish", headers=self.tv_headers).json(), {"status": "played"})
         self.assertIsNone(self.client.get("/api/tv/state").json()["invitation"])
         self.assertEqual(self.client.get("/api/tv/song/video").status_code, 404)
+
+    def test_websocket_scores_caption_onset_and_penalizes_sound_outside_cues(self):
+        identity = self.client.post("/api/singers", json={"name": "Cantor do teste"}).json()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO requests(id,singer_id,video_id,status) VALUES "
+                "('score-song',?,'1pLrF_rGLyg','ready')", (identity["singer_id"],)
+            )
+            enqueue_request(database, "score-song")
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) "
+                "VALUES (1,'score-song',0,1,1)"
+            )
+        captions = Path(self.directory.name) / generation / "captions" / "1pLrF_rGLyg.json"
+        captions.parent.mkdir(parents=True)
+        captions.write_text(json.dumps({"duration_ms": 10000, "bars": [
+            {"block_index": 0, "start_ms": 1000, "end_ms": 2000,
+             "score_window_start_ms": 900, "score_window_end_ms": 1100},
+            {"block_index": 1, "start_ms": 5000, "end_ms": 6000,
+             "score_window_start_ms": 4900, "score_window_end_ms": 5100},
+        ]}), encoding="utf-8")
+
+        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
+            with self.client.websocket_connect("/ws/requests") as singer_socket:
+                singer_socket.send_json({"token": identity["token"]})
+                singer_snapshot = singer_socket.receive_json()
+                self.assertNotIn("active_bars", singer_snapshot)
+                main_module.playback_sync = {
+                    "request_id": "score-song", "position_ms": 1000,
+                    "playing": False, "server_time": time.time(),
+                }
+                singer_socket.send_json({
+                    "type": "vocal_onset", "request_id": "score-song",
+                    "event_id": "test-hit", "position_ms": 1000,
+                })
+                hit = singer_socket.receive_json()
+                self.assertEqual((hit["result"], hit["hits"]), ("hit", 1))
+                self.assertEqual(hit["points"], 500.0)
+                main_module.playback_sync = {
+                    "request_id": "score-song", "position_ms": 3000,
+                    "playing": False, "server_time": time.time(),
+                }
+                singer_socket.send_json({
+                    "type": "vocal_onset", "request_id": "score-song",
+                    "event_id": "test-offcue", "position_ms": 3000,
+                })
+                penalty = singer_socket.receive_json()
+                self.assertEqual((penalty["result"], penalty["penalties"]), ("off_cue", 1))
+                self.assertEqual(penalty["points"], 0.0)
+                main_module.playback_sync = {
+                    "request_id": "score-song", "position_ms": 3200,
+                    "playing": False, "server_time": time.time(),
+                }
+                singer_socket.send_json({
+                    "type": "vocal_onset", "request_id": "score-song",
+                    "event_id": "test-offcue-repeat", "position_ms": 3200,
+                })
+                repeated = singer_socket.receive_json()
+                self.assertEqual((repeated["result"], repeated["penalties"]), ("off_cue_repeat", 1))
+                main_module.playback_sync = {
+                    "request_id": "score-song", "position_ms": 3600,
+                    "playing": False, "server_time": time.time(),
+                }
+                singer_socket.send_json({
+                    "type": "vocal_onset", "request_id": "score-song",
+                    "event_id": "test-offcue-next-window", "position_ms": 3600,
+                })
+                next_penalty = singer_socket.receive_json()
+                self.assertEqual(next_penalty["penalties"], 2)
+
+        with connection() as database:
+            row = database.execute(
+                "SELECT hit_blocks,penalties FROM song_scores WHERE request_id='score-song'"
+            ).fetchone()
+        self.assertEqual(json.loads(row["hit_blocks"]), [0])
+        self.assertEqual(row["penalties"], 2)
 
     def test_reset_keeps_join_url_but_invalidates_sessions_and_media(self):
         self.add_ready()
@@ -241,7 +325,7 @@ class TvTests(unittest.TestCase):
 
         with patch("app.worker.MEDIA_ROOT", Path(self.directory.name)), patch(
             "app.worker.download_video", side_effect=download
-        ), patch("app.worker.create_preview"):
+        ), patch("app.worker.create_preview"), patch("app.worker.create_caption_bars"):
             self.assertTrue(process_next())
         self.assertFalse((Path(self.directory.name) / generation).exists())
         self.assertEqual(self.client.get("/api/tv/state").json()["items"], [])

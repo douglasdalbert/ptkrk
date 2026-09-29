@@ -18,6 +18,8 @@ const groupStart = document.querySelector("#group-start");
 const confirmDialog = new ConfirmDialog();
 const skippingView = document.querySelector("#skipping");
 const singingOverlay = document.querySelector("#singing-overlay");
+const microphoneButton = document.querySelector("#microphone-button");
+const scoreStatus = document.querySelector("#score-status");
 const actionFooter = document.querySelector("#action-footer");
 const skipAction = document.querySelector("#skip-action");
 const skipButton = document.querySelector("#skip-button");
@@ -37,6 +39,33 @@ let groupRoomReady = false;
 let groupPollTimer = null;
 let pendingGroupPrompt = null;
 let failureAlertActive = false;
+let playbackClock = null;
+let activeBars = [];
+let microphoneStream = null;
+let microphoneContext = null;
+let microphoneAnalyser = null;
+let microphoneFrame = null;
+let loudFrameCount = 0;
+let currentScores = [];
+let currentRankingMax = 1000;
+let scoredBlocks = new Set();
+let scoredOffCueWindows = new Set();
+let scoredRequestId = null;
+let offCueRearmMs = 500;
+let microphoneRmsThreshold = 0.04;
+
+function stopMicrophone() {
+  if (microphoneFrame !== null) cancelAnimationFrame(microphoneFrame);
+  microphoneFrame = null;
+  microphoneStream?.getTracks().forEach(track => track.stop());
+  microphoneStream = null;
+  microphoneAnalyser = null;
+  if (microphoneContext && microphoneContext.state !== "closed") microphoneContext.close();
+  microphoneContext = null;
+  loudFrameCount = 0;
+    microphoneButton.textContent = "Ativar microfone";
+    microphoneButton.disabled = false; // Enable the microphone button
+}
 
 function connectionState(text, state = "connecting") {
   connectionLabel.dataset.state = state;
@@ -87,6 +116,13 @@ function clearSession() {
   currentInvitation = null;
   currentSkip = null;
   currentSong = null;
+  playbackClock = null;
+  activeBars = [];
+  scoredBlocks.clear();
+  currentScores = [];
+  currentRankingMax = 1000;
+  scoredRequestId = null;
+  stopMicrophone();
   allowSkip = false;
   latestItems = [];
   partySingers = [];
@@ -193,6 +229,18 @@ function connect() {
   current.addEventListener("message", (event) => {
     if (current !== socket) return;
     const message = JSON.parse(event.data);
+    if (message.type === "playback_sync") {
+      playbackClock = {...message, receivedAt: performance.now()};
+      return;
+    }
+    if (message.type === "score_update") {
+      if (message.singer_id !== singer?.singer_id) return;
+      const action = message.result === "hit" ? "Acertou" : "Som fora de um bloco";
+      scoreStatus.textContent = `${action}: ${message.hits} acertos, ${message.penalties} erros. ${message.points} / ${message.ranking_max} pontos.`;
+      document.querySelector("#song-points").textContent = message.points.toFixed(1);
+      document.querySelector("#song-rank").textContent = `${message.points.toFixed(1)} / ${message.ranking_max}`;
+      return;
+    }
     if (message.type === "group_state") {
       applyGroupRoomState(message);
       return;
@@ -211,6 +259,17 @@ function connect() {
       connectionState("Conectado", "connected");
       latestItems = message.items;
       partySingers = message.singers || [];
+      currentScores = message.scores || [];
+      currentRankingMax = message.ranking_max || 1000;
+      offCueRearmMs = message.off_cue_rearm_ms || 500;
+      microphoneRmsThreshold = message.microphone_rms_threshold || 0.04;
+      activeBars = message.active_bars || [];
+      if (message.invitation?.request_id !== scoredRequestId) {
+        scoredRequestId = message.invitation?.request_id || null;
+        scoredBlocks.clear();
+        scoredOffCueWindows.clear();
+      }
+      renderScores();
       renderSkip(message);
       renderInvitation(message.invitation, message.items);
       renderSingingOverlay(message.invitation, message.items);
@@ -452,8 +511,99 @@ function renderSingingOverlay(invitation, items) {
     item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
   const shouldShow = invitation?.accepted && isParticipant;
   if (shouldShow && !singingOverlay.open) singingOverlay.showModal();
-  if (!shouldShow && singingOverlay.open) singingOverlay.close();
+  if (!shouldShow && singingOverlay.open) {
+    singingOverlay.close();
+    stopMicrophone();
+    playbackClock = null;
+      microphoneButton.textContent = "Ativar microfone"; // Reset button text when closing
+      microphoneButton.disabled = false; // Enable the microphone button when closing
+  }
+  microphoneButton.hidden = !shouldShow;
+  const eligible = shouldShow && (item.singer_id === singer?.singer_id ? invitation.lead_accepted :
+    item.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.score_eligible && vocal.accepted));
+  microphoneButton.disabled = !eligible || !navigator.mediaDevices?.getUserMedia;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    scoreStatus.textContent = "Microfone requer HTTPS seguro neste aparelho.";
+  }
 }
+
+function renderScores() {
+  const score = currentScores.find(item => item.singer_id === singer?.singer_id);
+  document.querySelector("#song-points").textContent = score ? score.points.toFixed(1) : "0.0";
+  document.querySelector("#song-rank").textContent = score ?
+    `${score.points.toFixed(1)} / ${score.ranking_max}` : `0.0 / ${currentRankingMax}`;
+}
+
+function estimatePlaybackPosition() {
+  if (!playbackClock || !playbackClock.playing) return null;
+  return Math.round(playbackClock.position_ms + performance.now() - playbackClock.receivedAt);
+}
+
+function sampleMicrophone() {
+  if (!microphoneAnalyser || !microphoneStream) return;
+  const samples = new Float32Array(microphoneAnalyser.fftSize);
+  microphoneAnalyser.getFloatTimeDomainData(samples);
+  let squareSum = 0;
+  for (const sample of samples) squareSum += sample * sample;
+  const rms = Math.sqrt(squareSum / samples.length);
+  const requestId = currentInvitation?.request_id;
+  const position = estimatePlaybackPosition();
+  if (rms >= microphoneRmsThreshold) {
+    loudFrameCount += 1;
+    if (loudFrameCount >= 2 && requestId && position === null) {
+      scoreStatus.textContent = "Aguardando sincronismo da TV.";
+    }
+    if (loudFrameCount >= 2 && requestId && position !== null && socket?.readyState === WebSocket.OPEN) {
+      const bar = activeBars.find(candidate =>
+        position >= candidate.score_window_start_ms && position <= candidate.score_window_end_ms);
+      if (bar && !scoredBlocks.has(bar.block_index)) {
+        scoredBlocks.add(bar.block_index);
+        socket.send(JSON.stringify({
+          type: "vocal_onset",
+          request_id: requestId,
+          event_id: crypto.randomUUID(),
+          position_ms: position,
+        }));
+      } else if (!bar) {
+        const offCueWindow = Math.floor(position / offCueRearmMs);
+        if (!scoredOffCueWindows.has(offCueWindow)) {
+          scoredOffCueWindows.add(offCueWindow);
+          socket.send(JSON.stringify({
+            type: "vocal_onset",
+            request_id: requestId,
+            event_id: crypto.randomUUID(),
+            position_ms: position,
+          }));
+        }
+      }
+    }
+  } else {
+    loudFrameCount = 0;
+  }
+  microphoneFrame = requestAnimationFrame(sampleMicrophone);
+}
+
+microphoneButton.addEventListener("click", async () => {
+  microphoneButton.disabled = true;
+  try {
+    microphoneStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    microphoneContext = new AudioContext();
+    const source = microphoneContext.createMediaStreamSource(microphoneStream);
+    microphoneAnalyser = microphoneContext.createAnalyser();
+    microphoneAnalyser.fftSize = 1024;
+    source.connect(microphoneAnalyser);
+    onsetArmed = true;
+    scoreStatus.textContent = "Microfone ativo. Cante junto com as barras.";
+    microphoneButton.textContent = "Microfone ativo";
+    sampleMicrophone();
+  } catch {
+    stopMicrophone();
+    microphoneButton.disabled = false;
+    scoreStatus.textContent = "Não foi possível acessar o microfone. Verifique a permissão e o HTTPS.";
+  }
+});
 
 singingOverlay.addEventListener("cancel", event => event.preventDefault());
 

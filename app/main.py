@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 import qrcode
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
+from app.scoring import max_score, microphone_rms_threshold, off_cue_rearm_ms, record_onset, score_snapshot
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
 from app.storage import connection, initialize
@@ -61,7 +63,9 @@ VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 subscribers: set[WebSocket] = set()
 tv_subscribers: set[WebSocket] = set()
 singer_subscribers: dict[WebSocket, str] = {}
+singer_socket_ids: dict[WebSocket, str] = {}
 group_room_subscribers: dict[str, set[WebSocket]] = {}
+playback_sync: dict | None = None
 
 
 class NewSinger(BaseModel):
@@ -131,14 +135,37 @@ def request_snapshot() -> list[dict]:
     return items
 
 
-def party_snapshot() -> dict:
+def party_snapshot(include_caption_bars: bool = False) -> dict:
     with connection() as database:
         invitation = invitation_state(database)
         skipping = skip_state(database)
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
-    return {"type": "requests", "items": request_snapshot(), "invitation": invitation,
-            "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers}
+        scores = []
+        if invitation:
+            generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+            current_video = database.execute(
+                "SELECT video_id FROM requests WHERE id = ?", (invitation["request_id"],)
+            ).fetchone()
+            captions = MEDIA_ROOT / generation / "captions" / f"{current_video['video_id']}.json" if current_video else None
+            if include_caption_bars and captions and captions.is_file():
+                try:
+                    active_bars = json.loads(captions.read_text(encoding="utf-8")).get("bars", [])
+                except (OSError, json.JSONDecodeError):
+                    active_bars = []
+            else:
+                active_bars = []
+            scores = score_snapshot(database, invitation["request_id"], captions)
+        else:
+            active_bars = []
+    snapshot = {"type": "requests", "items": request_snapshot(), "invitation": invitation,
+                "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
+                "scores": scores, "ranking_max": max_score(),
+                "off_cue_rearm_ms": off_cue_rearm_ms(),
+                "microphone_rms_threshold": microphone_rms_threshold()}
+    if include_caption_bars:
+        snapshot["active_bars"] = active_bars
+    return snapshot
 
 
 def group_room_snapshot(request_id: str) -> dict | None:
@@ -210,7 +237,10 @@ async def watch_requests() -> None:
                         subscribers.discard(subscriber)
                         singer_subscribers.pop(subscriber, None)
                         continue
-                    await subscriber.send_json(current)
+                    await subscriber.send_json(
+                        party_snapshot(include_caption_bars=True)
+                        if subscriber in tv_subscribers else current
+                    )
                 except (WebSocketDisconnect, RuntimeError, OSError):
                     subscribers.discard(subscriber)
                     singer_subscribers.pop(subscriber, None)
@@ -218,6 +248,7 @@ async def watch_requests() -> None:
 
 @app.websocket("/ws/requests")
 async def requests_socket(websocket: WebSocket) -> None:
+    global playback_sync
     await websocket.accept()
     singer_id = None
     is_tv = False
@@ -241,11 +272,91 @@ async def requests_socket(websocket: WebSocket) -> None:
         else:
             with connection() as database:
                 singer_subscribers[websocket] = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
-        await websocket.send_json(party_snapshot())
+                singer_socket_ids[websocket] = singer_id
+        await websocket.send_json(party_snapshot(include_caption_bars=is_tv))
+        if not is_tv and playback_sync and time.time() - playback_sync["server_time"] < 1:
+            await websocket.send_json({**playback_sync, "type": "playback_sync"})
         subscribers.add(websocket)
         while True:
             message = await websocket.receive_json()
-            if is_tv or not isinstance(message, dict):
+            if not isinstance(message, dict):
+                continue
+            if is_tv and message.get("type") == "playback_sync":
+                request_id = message.get("request_id")
+                position_ms = message.get("position_ms")
+                if not isinstance(request_id, str) or not isinstance(position_ms, int) or position_ms < 0:
+                    continue
+                with connection() as database:
+                    invitation = invitation_state(database)
+                if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                    playback_sync = None
+                    continue
+                playback_sync = {
+                    "type": "playback_sync",
+                    "request_id": request_id,
+                    "position_ms": position_ms,
+                    "playing": bool(message.get("playing")),
+                    "server_time": time.time(),
+                    "server_time_ms": round(time.time() * 1000),
+                }
+                for subscriber in tuple(subscribers):
+                    if subscriber in tv_subscribers:
+                        continue
+                    try:
+                        await subscriber.send_json(playback_sync)
+                    except (WebSocketDisconnect, RuntimeError, OSError):
+                        subscribers.discard(subscriber)
+                continue
+            if is_tv:
+                continue
+            if message.get("type") == "vocal_onset":
+                request_id = message.get("request_id")
+                position_ms = message.get("position_ms")
+                event_id = message.get("event_id")
+                if (not isinstance(request_id, str) or not isinstance(position_ms, int)
+                        or not isinstance(event_id, str) or len(event_id) > 80):
+                    continue
+                if not 0 <= position_ms <= 12 * 60 * 1000:
+                    continue
+                sync = playback_sync
+                if not sync or sync["request_id"] != request_id or time.time() - sync["server_time"] > 0.75:
+                    continue
+                expected_position = sync["position_ms"] + (
+                    round((time.time() - sync["server_time"]) * 1000) if sync["playing"] else 0
+                )
+                if abs(position_ms - expected_position) > 300:
+                    continue
+                with connection() as database:
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    owner = database.execute(
+                        "SELECT singer_id, video_id FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    if owner is None:
+                        continue
+                    singer_id = singer_socket_ids.get(websocket)
+                    eligible = owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = database.execute(
+                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
+                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1",
+                            (request_id, singer_id),
+                        ).fetchone() is not None
+                    if not eligible:
+                        continue
+                    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+                    caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
+                    database.execute("BEGIN IMMEDIATE")
+                    update = record_onset(
+                        database, request_id, singer_id, event_id, position_ms, caption_path
+                    )
+                if update:
+                    for subscriber in tuple(subscribers):
+                        try:
+                            await subscriber.send_json(update)
+                        except (WebSocketDisconnect, RuntimeError, OSError):
+                            subscribers.discard(subscriber)
                 continue
             request_id = message.get("request_id")
             if not isinstance(request_id, str):
@@ -267,6 +378,7 @@ async def requests_socket(websocket: WebSocket) -> None:
         subscribers.discard(websocket)
         tv_subscribers.discard(websocket)
         singer_subscribers.pop(websocket, None)
+        singer_socket_ids.pop(websocket, None)
         for request_id, room_subscribers in tuple(group_room_subscribers.items()):
             room_subscribers.discard(websocket)
             if not room_subscribers:
@@ -329,7 +441,7 @@ def tv_finish(request_id: str) -> dict:
 
 @app.get("/api/tv/{request_id}/{kind}", dependencies=[Depends(authenticated_tv)])
 def tv_media(request_id: str, kind: str) -> FileResponse:
-    if kind not in {"video", "preview"}:
+    if kind not in {"video", "preview", "captions"}:
         raise HTTPException(404, "Mídia indisponível")
     with connection() as database:
         item = database.execute("SELECT video_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)).fetchone()
@@ -337,12 +449,16 @@ def tv_media(request_id: str, kind: str) -> FileResponse:
         raise HTTPException(404, "Mídia indisponível")
     with connection() as database:
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-    media = MEDIA_ROOT / generation / ("videos" if kind == "video" else "previews") / (
-        item["video_id"] + (".mp4" if kind == "video" else ".jpg")
-    )
+    category, suffix = {
+        "video": ("videos", ".mp4"),
+        "preview": ("previews", ".jpg"),
+        "captions": ("captions", ".json"),
+    }[kind]
+    media = MEDIA_ROOT / generation / category / f"{item['video_id']}{suffix}"
     if not media.is_file():
         raise HTTPException(404, "Mídia indisponível")
-    return FileResponse(media, media_type="video/mp4" if kind == "video" else "image/jpeg")
+    media_type = {"video": "video/mp4", "preview": "image/jpeg", "captions": "application/json"}[kind]
+    return FileResponse(media, media_type=media_type)
 
 
 def singer_address(request: Request) -> str:

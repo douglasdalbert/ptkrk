@@ -22,7 +22,8 @@ def remove_unused_media(database: sqlite3.Connection, video_id: str, generation:
     ).fetchone()
     if active:
         return False
-    for category, suffix in (("videos", ".mp4"), ("previews", ".jpg")):
+    for category, suffix in (("videos", ".mp4"), ("previews", ".jpg"),
+                             ("analysis", ".json"), ("captions", ".json")):
         (MEDIA_ROOT / generation / category / f"{video_id}{suffix}").unlink(missing_ok=True)
     return True
 

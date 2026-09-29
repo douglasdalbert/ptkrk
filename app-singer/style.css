@@ -98,6 +98,8 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .singing-overlay::backdrop { background: #111216; }
 .singing-note { display: grid; width: 132px; height: 132px; place-items: center; border: 3px solid var(--lime); border-radius: 50%; color: var(--pink); font-family: Georgia, serif; font-size: 88px; line-height: 1; box-shadow: 0 0 42px #c7fa4538; animation: singing-pulse 1.8s ease-in-out infinite; }
 .singing-overlay strong { font-family: Georgia, serif; font-size: 28px; font-weight: 400; }
+.singing-overlay #score-status { max-width: min(420px, 92vw); margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.singing-overlay #microphone-button { width: min(320px, 88vw); }
 @keyframes singing-pulse { 50% { transform: scale(1.05); box-shadow: 0 0 58px #c7fa4552; } }
 .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scores div { display: grid; gap: 5px; }

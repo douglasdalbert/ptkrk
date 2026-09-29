@@ -60,10 +60,11 @@ class WorkerTests(unittest.TestCase):
     def test_success_marks_request_ready(self):
         with patch("app.worker.download_video", return_value="Minha música") as download, patch(
             "app.worker.create_preview"
-        ) as preview:
+        ) as preview, patch("app.worker.create_caption_bars") as captions:
             self.assertTrue(process_next())
         download.assert_called_once_with("dQw4w9WgXcQ", ANY)
         preview.assert_called_once_with("dQw4w9WgXcQ", download.call_args.args[1])
+        captions.assert_called_once_with("dQw4w9WgXcQ", download.call_args.args[1])
         with connection() as database:
             row = database.execute("SELECT status, title FROM requests WHERE id = 'request'").fetchone()
         self.assertEqual((row["status"], row["title"]), ("ready", "Minha música"))
@@ -77,6 +78,16 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(row["status"], "failed")
         self.assertTrue(row["error"])
 
+    def test_caption_failure_does_not_block_video_readiness(self):
+        with patch("app.worker.download_video", return_value="Minha música"), \
+             patch("app.worker.create_preview"), \
+             patch("app.worker.create_caption_bars", side_effect=ValueError("Sem legenda nativa")):
+            self.assertTrue(process_next())
+        with connection() as database:
+            row = database.execute("SELECT status, error FROM requests WHERE id = 'request'").fetchone()
+        self.assertEqual(row["status"], "ready")
+        self.assertIsNone(row["error"])
+
     def test_media_cleanup_is_production_only_and_waits_for_last_active_request(self):
         media_root = Path(self.directory.name) / "media"
         with connection() as database:
@@ -87,10 +98,16 @@ class WorkerTests(unittest.TestCase):
             database.execute("UPDATE requests SET status = 'failed' WHERE id = 'request'")
         video = media_root / generation / "videos" / "dQw4w9WgXcQ.mp4"
         preview = media_root / generation / "previews" / "dQw4w9WgXcQ.jpg"
+        analysis = media_root / generation / "analysis" / "dQw4w9WgXcQ.json"
+        captions = media_root / generation / "captions" / "dQw4w9WgXcQ.json"
         video.parent.mkdir(parents=True)
         preview.parent.mkdir(parents=True)
+        analysis.parent.mkdir(parents=True)
+        captions.parent.mkdir(parents=True)
         video.write_bytes(b"video")
         preview.write_bytes(b"preview")
+        analysis.write_text("{}", encoding="utf-8")
+        captions.write_text("{}", encoding="utf-8")
 
         with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "development"):
             with connection() as database:
@@ -105,6 +122,8 @@ class WorkerTests(unittest.TestCase):
                 self.assertTrue(remove_unused_media(database, "dQw4w9WgXcQ", generation))
             self.assertFalse(video.exists())
             self.assertFalse(preview.exists())
+            self.assertFalse(analysis.exists())
+            self.assertFalse(captions.exists())
 
     def test_preview_requires_ready_request(self):
         with patch("app.main.MEDIA_ROOT", Path(self.directory.name)):
@@ -122,7 +141,8 @@ class WorkerTests(unittest.TestCase):
 
     def test_snapshot_reflects_worker_transition(self):
         self.assertEqual(request_snapshot()[0]["status"], "pending")
-        with patch("app.worker.download_video", return_value="Minha música"), patch("app.worker.create_preview"):
+        with patch("app.worker.download_video", return_value="Minha música"), patch("app.worker.create_preview"), \
+               patch("app.worker.create_caption_bars"):
             process_next()
         self.assertEqual(request_snapshot()[0]["status"], "ready")
 
@@ -165,6 +185,19 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(database.execute("SELECT position FROM ready_queue WHERE request_id='request'").fetchone()[0], 1)
             self.assertEqual(database.execute("SELECT COUNT(*) FROM invitation").fetchone()[0], 0)
 
+    def test_ready_video_does_not_require_optional_caption_sidecar_to_stay_ready(self):
+        media_root = Path(self.directory.name) / "media"
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status='ready' WHERE id='request'")
+            video = media_root / generation / "videos" / "dQw4w9WgXcQ.mp4"
+            video.parent.mkdir(parents=True)
+            video.write_bytes(b"video")
+            with patch("app.worker.MEDIA_ROOT", media_root):
+                recover_missing_media(database, generation)
+            self.assertEqual(database.execute("SELECT status FROM requests WHERE id='request'").fetchone()[0], "ready")
+            self.assertEqual(database.execute("SELECT position FROM ready_queue WHERE request_id='request'").fetchone()[0], 1)
+
     def test_removal_during_download_cannot_restore_request(self):
         def cancel_during_download(video_id, generation):
             remove_request("request", "singer")
@@ -175,7 +208,8 @@ class WorkerTests(unittest.TestCase):
 
         media_root = Path(self.directory.name) / "media"
         with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "production"), \
-             patch("app.worker.download_video", side_effect=cancel_during_download), patch("app.worker.create_preview"):
+             patch("app.worker.download_video", side_effect=cancel_during_download), patch("app.worker.create_preview"), \
+             patch("app.worker.create_caption_bars"):
             self.assertTrue(process_next())
         self.assertFalse((media_root / self._generation() / "videos" / "dQw4w9WgXcQ.mp4").exists())
         with connection() as database:
@@ -212,7 +246,7 @@ class WorkerTests(unittest.TestCase):
                 database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row[0]))
         with patch("app.worker.download_video", return_value="Nova música") as download, patch(
             "app.worker.create_preview"
-        ):
+        ), patch("app.worker.create_caption_bars"):
             self.assertTrue(process_next())
             download.assert_called_once_with("glvVYIhdWlU", ANY)
         with connection() as database:
@@ -242,7 +276,8 @@ class WorkerTests(unittest.TestCase):
             return video_id
 
         try:
-            with patch("app.worker.download_video", side_effect=download), patch("app.worker.create_preview"):
+              with patch("app.worker.download_video", side_effect=download), patch("app.worker.create_preview"), \
+                  patch("app.worker.create_caption_bars"):
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     first = executor.submit(process_next)
                     self.assertTrue(started.wait(3))
