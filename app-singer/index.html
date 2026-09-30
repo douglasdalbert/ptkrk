@@ -13,12 +13,17 @@
       <header class="topbar">
         <div class="wordmark"><span class="mark" aria-hidden="true">✳</span><span class="wordmark-title">KARAOKÊ</span><span id="identity-label" class="wordmark-sub">/ CANTOR</span></div>
         <div class="topbar-actions">
+          <button id="microphone-permission-button" class="microphone-permission" type="button" aria-label="Permitir uso do microfone" title="Permitir uso do microfone">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3m-4 0h8"/></svg>
+            <span>Permitir microfone</span>
+          </button>
           <span id="connection" class="connection" role="status" aria-label="Aguardando conexão" title="Aguardando conexão" data-state="connecting"></span>
           <button id="sign-out" class="sign-out" type="button" aria-label="Trocar pessoa" title="Trocar pessoa" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
           </button>
         </div>
       </header>
+      <p id="microphone-permission-status" class="microphone-permission-status" role="status" aria-live="polite" hidden></p>
 
       <main class="scroll-content">
         <section id="entry" class="entry" aria-labelledby="entry-title">
@@ -61,6 +66,7 @@
       <strong id="singing-title">Você está cantando</strong>
       <p id="score-status" role="status">Ative o microfone para começar a pontuar.</p>
       <button id="microphone-button" class="primary" type="button">Ativar microfone</button>
+      <canvas id="microphone-waveform" class="microphone-waveform" width="320" height="48" role="img" aria-label="Forma de onda do microfone"></canvas>
     </dialog>
     <footer id="action-footer" class="action-footer" hidden>
       <div class="footer-inner">

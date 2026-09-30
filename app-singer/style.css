@@ -23,6 +23,13 @@ button:disabled { opacity: .55; cursor: wait; }
 .scroll-content { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
 .topbar { min-height: 52px; height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); }
 .topbar-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.microphone-permission { display: flex; flex: none; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 9px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 800; }
+.microphone-permission:hover, .microphone-permission:focus-visible { border-color: var(--cyan); color: var(--text); outline: none; }
+.microphone-permission[data-permission="granted"] { border-color: var(--lime); color: var(--lime); }
+.microphone-permission:disabled { cursor: wait; }
+.microphone-permission svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.microphone-permission-status { margin: 8px 0 0; padding: 8px 10px; border-left: 2px solid var(--cyan); background: #64d4c315; color: var(--text); font-size: 12px; line-height: 1.4; }
+.microphone-permission-status[data-state="error"] { border-color: var(--danger); background: #ff586815; }
 .action-footer { position: fixed; z-index: 10; left: 0; right: 0; bottom: env(safe-area-inset-bottom); height: 48px; background: var(--panel); border-top: 1px solid var(--border); }
 .footer-inner { position: relative; max-width: 720px; height: 48px; margin: auto; padding: 0 22px; }
 .footer-button { display: block; width: 100%; height: 48px; border: 0; border-radius: 0; font-size: 14px; font-weight: 800; }
@@ -100,6 +107,7 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .singing-overlay strong { font-family: Georgia, serif; font-size: 28px; font-weight: 400; }
 .singing-overlay #score-status { max-width: min(420px, 92vw); margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .singing-overlay #microphone-button { width: min(320px, 88vw); }
+.microphone-waveform { display: block; width: min(320px, 88vw); height: 48px; }
 @keyframes singing-pulse { 50% { transform: scale(1.05); box-shadow: 0 0 58px #c7fa4552; } }
 .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scores div { display: grid; gap: 5px; }
@@ -137,3 +145,4 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .confirm-actions { display: flex; justify-content: flex-end; align-items: center; gap: 20px; }
 .danger { min-height: 42px; padding: 0 14px; border: 0; border-radius: 4px; background: var(--pink); color: #19080e; font-size: 13px; font-weight: 800; }
 @media (max-width: 390px) { .shell, .footer-inner { padding-inline: 16px; } .invitation-details, .skipping, .skip-action p, .invitation #invitation-message { left: 16px; right: 16px; } .wordmark-sub { display: block; } #identity-label { max-width: calc(100vw - 205px); font-size: 11px; } .request-row .primary { padding-inline: 14px; } .request-row .primary span { display: none; } .status { font-size: 9px; } }
+@media (max-width: 390px) { .microphone-permission { width: 34px; padding: 0; } .microphone-permission span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; } }

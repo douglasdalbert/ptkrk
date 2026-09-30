@@ -351,6 +351,17 @@ async def requests_socket(websocket: WebSocket) -> None:
                     update = record_onset(
                         database, request_id, singer_id, event_id, position_ms, caption_path
                     )
+                activity = {
+                    "type": "vocal_activity",
+                    "request_id": request_id,
+                    "singer_id": singer_id,
+                }
+                for tv_subscriber in tuple(tv_subscribers):
+                    try:
+                        await tv_subscriber.send_json(activity)
+                    except (WebSocketDisconnect, RuntimeError, OSError):
+                        subscribers.discard(tv_subscriber)
+                        tv_subscribers.discard(tv_subscriber)
                 if update:
                     for subscriber in tuple(subscribers):
                         try:

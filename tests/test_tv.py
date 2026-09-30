@@ -95,53 +95,60 @@ class TvTests(unittest.TestCase):
              "score_window_start_ms": 4900, "score_window_end_ms": 5100},
         ]}), encoding="utf-8")
 
-        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
-            with self.client.websocket_connect("/ws/requests") as singer_socket:
-                singer_socket.send_json({"token": identity["token"]})
-                singer_snapshot = singer_socket.receive_json()
-                self.assertNotIn("active_bars", singer_snapshot)
-                main_module.playback_sync = {
-                    "request_id": "score-song", "position_ms": 1000,
-                    "playing": False, "server_time": time.time(),
-                }
-                singer_socket.send_json({
-                    "type": "vocal_onset", "request_id": "score-song",
-                    "event_id": "test-hit", "position_ms": 1000,
-                })
-                hit = singer_socket.receive_json()
-                self.assertEqual((hit["result"], hit["hits"]), ("hit", 1))
-                self.assertEqual(hit["points"], 500.0)
-                main_module.playback_sync = {
-                    "request_id": "score-song", "position_ms": 3000,
-                    "playing": False, "server_time": time.time(),
-                }
-                singer_socket.send_json({
-                    "type": "vocal_onset", "request_id": "score-song",
-                    "event_id": "test-offcue", "position_ms": 3000,
-                })
-                penalty = singer_socket.receive_json()
-                self.assertEqual((penalty["result"], penalty["penalties"]), ("off_cue", 1))
-                self.assertEqual(penalty["points"], 0.0)
-                main_module.playback_sync = {
-                    "request_id": "score-song", "position_ms": 3200,
-                    "playing": False, "server_time": time.time(),
-                }
-                singer_socket.send_json({
-                    "type": "vocal_onset", "request_id": "score-song",
-                    "event_id": "test-offcue-repeat", "position_ms": 3200,
-                })
-                repeated = singer_socket.receive_json()
-                self.assertEqual((repeated["result"], repeated["penalties"]), ("off_cue_repeat", 1))
-                main_module.playback_sync = {
-                    "request_id": "score-song", "position_ms": 3600,
-                    "playing": False, "server_time": time.time(),
-                }
-                singer_socket.send_json({
-                    "type": "vocal_onset", "request_id": "score-song",
-                    "event_id": "test-offcue-next-window", "position_ms": 3600,
-                })
-                next_penalty = singer_socket.receive_json()
-                self.assertEqual(next_penalty["penalties"], 2)
+        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "true"}):
+            with self.client.websocket_connect("/ws/requests") as tv_socket:
+                tv_socket.send_json({"token": ""})
+                tv_socket.receive_json()
+                with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
+                    with self.client.websocket_connect("/ws/requests") as singer_socket:
+                        singer_socket.send_json({"token": identity["token"]})
+                        singer_snapshot = singer_socket.receive_json()
+                        self.assertNotIn("active_bars", singer_snapshot)
+                        main_module.playback_sync = {
+                            "request_id": "score-song", "position_ms": 1000,
+                            "playing": False, "server_time": time.time(),
+                        }
+                        singer_socket.send_json({
+                            "type": "vocal_onset", "request_id": "score-song",
+                            "event_id": "test-hit", "position_ms": 1000,
+                        })
+                        activity = tv_socket.receive_json()
+                        self.assertEqual(activity["type"], "vocal_activity")
+                        self.assertEqual(activity["request_id"], "score-song")
+                        hit = singer_socket.receive_json()
+                        self.assertEqual((hit["result"], hit["hits"]), ("hit", 1))
+                        self.assertEqual(hit["points"], 500.0)
+                        main_module.playback_sync = {
+                            "request_id": "score-song", "position_ms": 3000,
+                            "playing": False, "server_time": time.time(),
+                        }
+                        singer_socket.send_json({
+                            "type": "vocal_onset", "request_id": "score-song",
+                            "event_id": "test-offcue", "position_ms": 3000,
+                        })
+                        penalty = singer_socket.receive_json()
+                        self.assertEqual((penalty["result"], penalty["penalties"]), ("off_cue", 1))
+                        self.assertEqual(penalty["points"], 0.0)
+                        main_module.playback_sync = {
+                            "request_id": "score-song", "position_ms": 3200,
+                            "playing": False, "server_time": time.time(),
+                        }
+                        singer_socket.send_json({
+                            "type": "vocal_onset", "request_id": "score-song",
+                            "event_id": "test-offcue-repeat", "position_ms": 3200,
+                        })
+                        repeated = singer_socket.receive_json()
+                        self.assertEqual((repeated["result"], repeated["penalties"]), ("off_cue_repeat", 1))
+                        main_module.playback_sync = {
+                            "request_id": "score-song", "position_ms": 3600,
+                            "playing": False, "server_time": time.time(),
+                        }
+                        singer_socket.send_json({
+                            "type": "vocal_onset", "request_id": "score-song",
+                            "event_id": "test-offcue-next-window", "position_ms": 3600,
+                        })
+                        next_penalty = singer_socket.receive_json()
+                        self.assertEqual(next_penalty["penalties"], 2)
 
         with connection() as database:
             row = database.execute(

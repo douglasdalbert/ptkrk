@@ -19,6 +19,9 @@ const confirmDialog = new ConfirmDialog();
 const skippingView = document.querySelector("#skipping");
 const singingOverlay = document.querySelector("#singing-overlay");
 const microphoneButton = document.querySelector("#microphone-button");
+const microphoneWaveform = document.querySelector("#microphone-waveform");
+const microphonePermissionButton = document.querySelector("#microphone-permission-button");
+const microphonePermissionStatus = document.querySelector("#microphone-permission-status");
 const scoreStatus = document.querySelector("#score-status");
 const actionFooter = document.querySelector("#action-footer");
 const skipAction = document.querySelector("#skip-action");
@@ -63,6 +66,7 @@ function stopMicrophone() {
   if (microphoneContext && microphoneContext.state !== "closed") microphoneContext.close();
   microphoneContext = null;
   loudFrameCount = 0;
+  drawMicrophoneWaveform();
     microphoneButton.textContent = "Ativar microfone";
     microphoneButton.disabled = false; // Enable the microphone button
 }
@@ -510,7 +514,10 @@ function renderSingingOverlay(invitation, items) {
   const isParticipant = item && singer && (item.singer_id === singer.singer_id ||
     item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
   const shouldShow = invitation?.accepted && isParticipant;
-  if (shouldShow && !singingOverlay.open) singingOverlay.showModal();
+  if (shouldShow && !singingOverlay.open) {
+    singingOverlay.showModal();
+    drawMicrophoneWaveform();
+  }
   if (!shouldShow && singingOverlay.open) {
     singingOverlay.close();
     stopMicrophone();
@@ -539,10 +546,44 @@ function estimatePlaybackPosition() {
   return Math.round(playbackClock.position_ms + performance.now() - playbackClock.receivedAt);
 }
 
+function drawMicrophoneWaveform(samples = null) {
+  const width = microphoneWaveform.clientWidth;
+  const height = microphoneWaveform.clientHeight;
+  if (!width || !height) return;
+  const pixelRatio = window.devicePixelRatio || 1;
+  const pixelWidth = Math.round(width * pixelRatio);
+  const pixelHeight = Math.round(height * pixelRatio);
+  if (microphoneWaveform.width !== pixelWidth || microphoneWaveform.height !== pixelHeight) {
+    microphoneWaveform.width = pixelWidth;
+    microphoneWaveform.height = pixelHeight;
+  }
+  const context = microphoneWaveform.getContext("2d");
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.beginPath();
+  context.moveTo(0, height / 2);
+  context.lineTo(width, height / 2);
+  context.lineWidth = 1;
+  context.strokeStyle = "#ffffff4d";
+  context.stroke();
+  if (!samples) return;
+  context.beginPath();
+  for (let x = 0; x < width; x += 1) {
+    const sampleIndex = Math.floor(x / width * (samples.length - 1));
+    const y = height / 2 - samples[sampleIndex] * (height * 0.45);
+    if (x === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  }
+  context.lineWidth = 2;
+  context.strokeStyle = "#64d4c3";
+  context.stroke();
+}
+
 function sampleMicrophone() {
   if (!microphoneAnalyser || !microphoneStream) return;
   const samples = new Float32Array(microphoneAnalyser.fftSize);
   microphoneAnalyser.getFloatTimeDomainData(samples);
+  drawMicrophoneWaveform(samples);
   let squareSum = 0;
   for (const sample of samples) squareSum += sample * sample;
   const rms = Math.sqrt(squareSum / samples.length);
@@ -594,7 +635,7 @@ microphoneButton.addEventListener("click", async () => {
     microphoneAnalyser = microphoneContext.createAnalyser();
     microphoneAnalyser.fftSize = 1024;
     source.connect(microphoneAnalyser);
-    onsetArmed = true;
+    drawMicrophoneWaveform();
     scoreStatus.textContent = "Microfone ativo. Cante junto com as barras.";
     microphoneButton.textContent = "Microfone ativo";
     sampleMicrophone();
@@ -606,6 +647,46 @@ microphoneButton.addEventListener("click", async () => {
 });
 
 singingOverlay.addEventListener("cancel", event => event.preventDefault());
+
+microphonePermissionButton.addEventListener("click", async () => {
+  const getUserMedia = navigator.mediaDevices?.getUserMedia;
+  if (!getUserMedia) {
+    microphonePermissionStatus.dataset.state = "error";
+    microphonePermissionStatus.textContent = "Microfone indisponível. Use um navegador compatível em uma conexão HTTPS segura.";
+    microphonePermissionStatus.hidden = false;
+    return;
+  }
+
+  microphonePermissionButton.disabled = true;
+  microphonePermissionStatus.hidden = true;
+  try {
+    const stream = await getUserMedia.call(navigator.mediaDevices, {
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    stream.getTracks().forEach(track => track.stop());
+    microphonePermissionButton.dataset.permission = "granted";
+    microphonePermissionButton.setAttribute("aria-label", "Permissão de microfone concedida");
+    microphonePermissionButton.title = "Permissão de microfone concedida";
+    microphonePermissionStatus.dataset.state = "granted";
+    microphonePermissionStatus.textContent = "Permissão concedida. O microfone só será usado para pontuar quando for sua vez.";
+    microphonePermissionStatus.hidden = false;
+  } catch {
+    microphonePermissionStatus.dataset.state = "error";
+    microphonePermissionStatus.textContent = "Não foi possível acessar o microfone. Verifique a permissão e o HTTPS.";
+    microphonePermissionStatus.hidden = false;
+  } finally {
+    microphonePermissionButton.disabled = false;
+  }
+});
+
+if (!navigator.mediaDevices?.getUserMedia) {
+  microphonePermissionButton.disabled = true;
+  microphonePermissionButton.setAttribute("aria-label", "Microfone requer HTTPS seguro neste aparelho");
+  microphonePermissionButton.title = "Microfone requer HTTPS seguro neste aparelho";
+  microphonePermissionStatus.dataset.state = "error";
+  microphonePermissionStatus.textContent = "Microfone indisponível. Use um navegador compatível em uma conexão HTTPS segura.";
+  microphonePermissionStatus.hidden = false;
+}
 
 function renderGroupList() {
   if (!groupDialog.open || !currentInvitation || !singer) return;

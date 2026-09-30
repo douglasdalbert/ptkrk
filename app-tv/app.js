@@ -7,6 +7,7 @@ const playButton = document.querySelector("#play");
 const error = document.querySelector("#error");
 const connectionStatus = document.querySelector("#connect-status");
 const lyricTrack = document.querySelector("#track");
+const vocalMarker = document.querySelector("#vocal-marker");
 const lyricText = document.querySelector("#lyric-text");
 const liveScore = document.querySelector("#live-score");
 let socket;
@@ -70,7 +71,7 @@ async function startPlayback(item) {
   captionBars = [];
   hitBlocks = new Set();
   visibleBlocks.clear();
-  lyricTrack.hidden = true;
+  lyricTrack.hidden = false;
   lyricText.replaceChildren();
   liveScore.hidden = true;
   liveScore.textContent = "";
@@ -140,12 +141,21 @@ function renderCaptionBar() {
       visibleBlocks.delete(index);
     }
   }
-  lyricTrack.hidden = !visible.size;
+  lyricTrack.hidden = !visible.size && !activeId;
 }
 
 function animateCaptionBars() {
   renderCaptionBar();
   captionFrame = video.paused || video.ended ? null : requestAnimationFrame(animateCaptionBars);
+}
+
+function animateVocalMarker() {
+  vocalMarker.getAnimations().forEach(animation => animation.cancel());
+  vocalMarker.animate([
+    { transform: "translateX(-50%) scaleX(1)", backgroundColor: "#ffffff6b", boxShadow: "0 0 8px #000" },
+    { transform: "translateX(-50%) scaleX(3)", backgroundColor: "#64d4c3", boxShadow: "0 0 18px #64d4c3" },
+    { transform: "translateX(-50%) scaleX(1)", backgroundColor: "#ffffff6b", boxShadow: "0 0 8px #000" },
+  ], { duration: 420, easing: "ease-out" });
 }
 
 function render(snapshot) {
@@ -216,6 +226,10 @@ function connect() {
     failed = false;
     setConnectionStatus("connected", "Conectado");
     const message = JSON.parse(event.data);
+    if (message.type === "vocal_activity") {
+      if (message.request_id === activeId) animateVocalMarker();
+      return;
+    }
     if (message.type === "score_update") {
       if (message.request_id !== activeId) return;
       if (message.result === "hit" && message.block_index != null) hitBlocks.add(message.block_index);
