@@ -76,6 +76,7 @@ const loudnessWindowMs = 250;
 const loudnessBaselineWindows = 20;
 const loudnessSurgeFrames = 12;
 const boostRequestCooldownMs = 3000;
+const failedRequestAlertDurationMs = 10000;
 const errorTimers = new WeakMap();
 
 function stopMicrophone() {
@@ -495,7 +496,7 @@ function showFailedRequest(items) {
     alert.textContent = `Não foi possível preparar "${failed.title || `youtube.com/watch?v=${failed.video_id}`}". ${failed.error || "O vídeo não pôde ser preparado."}`;
     alert.hidden = false;
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, failedRequestAlertDurationMs));
       if (singer !== owner) return;
       acknowledgedFailures.add(failed.id);
       alert.hidden = true;
