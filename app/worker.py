@@ -1,9 +1,10 @@
+import json
 import logging
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from app.captions import create_caption_bars
+from app.captions import CAPTION_VERSION, create_caption_bars
 from app.media import MEDIA_ROOT, create_preview, download_video, remove_unused_media
 from app.storage import connection, initialize
 
@@ -18,6 +19,31 @@ def recover_missing_media(database, generation: str) -> None:
             database.execute("UPDATE requests SET status = 'pending' WHERE id = ?", (item["id"],))
             database.execute("DELETE FROM skip_request WHERE request_id = ?", (item["id"],))
             database.execute("DELETE FROM invitation WHERE request_id = ?", (item["id"],))
+
+
+def outdated_ready_captions(excluded: set[tuple[str, str]]) -> tuple[str, str] | None:
+    with connection() as database:
+        generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        rows = database.execute(
+            """SELECT DISTINCT requests.video_id FROM requests
+               JOIN ready_queue ON ready_queue.request_id = requests.id
+               WHERE requests.status = 'ready' AND ready_queue.position <= 10
+               ORDER BY ready_queue.position"""
+        ).fetchall()
+    for row in rows:
+        video_id = row["video_id"]
+        if (generation, video_id) in excluded:
+            continue
+        path = MEDIA_ROOT / generation / "captions" / f"{video_id}.json"
+        if not path.is_file():
+            continue
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("version") == CAPTION_VERSION:
+                continue
+        except (OSError, ValueError):
+            pass
+        return video_id, generation
+    return None
 
 
 def process_next() -> bool:
@@ -87,13 +113,18 @@ def main() -> None:
             shutil.rmtree(directory, ignore_errors=True)
     with ThreadPoolExecutor(max_workers=2) as executor:
         active = set()
+        refreshes = {}
+        failed_refreshes = set()
         while True:
             completed = {future for future in active if future.done()}
             for future in completed:
+                refreshing = refreshes.pop(future, None)
                 try:
                     future.result()
                 except Exception:
                     logger.exception("Falha inesperada no worker")
+                    if refreshing:
+                        failed_refreshes.add(refreshing)
             active.difference_update(completed)
             if len(active) < 2:
                 with connection() as database:
@@ -106,6 +137,14 @@ def main() -> None:
                     ).fetchone()
                 if eligible:
                     active.add(executor.submit(process_next))
+                else:
+                    excluded = failed_refreshes | set(refreshes.values())
+                    outdated = outdated_ready_captions(excluded)
+                    if outdated:
+                        video_id, generation = outdated
+                        future = executor.submit(create_caption_bars, video_id, generation)
+                        refreshes[future] = (generation, video_id)
+                        active.add(future)
             time.sleep(1)
 
 

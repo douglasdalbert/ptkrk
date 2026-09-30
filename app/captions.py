@@ -7,15 +7,41 @@ from pathlib import Path
 from yt_dlp import YoutubeDL
 
 from app.media import MEDIA_ROOT
-from app.scoring import block_duration_ms, onset_tolerance_ms as configured_onset_tolerance_ms
+from app.scoring import block_duration_ms, caption_history_ms, onset_tolerance_ms as configured_onset_tolerance_ms
 
 TIMESTAMP = re.compile(
     r"(?P<start>\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+"
     r"(?P<end>\d{2}:\d{2}:\d{2}\.\d{3})"
 )
+CUE_LINE = re.compile(r"^\d{2}:\d{2}:\d{2}\.\d{3}\s+-->[^\r\n]*(?:\r?\n|$)", re.MULTILINE)
 VTT_TAG = re.compile(r"<[^>]*>")
+INLINE_TIMESTAMP = re.compile(r"<(?P<time>\d{2}:\d{2}:\d{2}\.\d{3})>")
 BRACKETED_TEXT = re.compile(r"\[[^\]\r\n]*\]")
 DECORATION = re.compile(r"[\s♪♫♬♩]+")
+SPEAKER_MARKER = re.compile(r"(^|\n)[^\S\r\n]*>>[^\S\r\n]*")
+CAPTION_VERSION = 7
+
+
+def normalized_words(text: str) -> list[str]:
+    return [word.casefold().strip(".,!?;:") for word in text.split()]
+
+
+def contains_phrase(haystack: list[str], phrase: list[str]) -> bool:
+    return any(haystack[index:index + len(phrase)] == phrase
+               for index in range(len(haystack) - len(phrase) + 1))
+
+
+def new_caption_text(previous: str, current: str) -> str:
+    old_words = previous.split()
+    new_words = current.split()
+    for count in range(min(len(old_words), len(new_words)), 0, -1):
+        if [word.casefold().strip(".,!?;:") for word in old_words[-count:]] == [
+            word.casefold().strip(".,!?;:") for word in new_words[:count]
+        ]:
+            return " ".join(new_words[count:])
+    return current
+
+
 def to_milliseconds(timestamp: str) -> int:
     hours, minutes, seconds, milliseconds = map(int, re.split(r"[:.]", timestamp))
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds
@@ -53,44 +79,78 @@ def parse_vtt_caption_bars(
     duration_ms: int,
     onset_tolerance_ms: int | None = None,
     max_block_ms: int | None = None,
+    history_ms: int | None = None,
 ) -> dict:
     onset_tolerance_ms = configured_onset_tolerance_ms() if onset_tolerance_ms is None else onset_tolerance_ms
     max_block_ms = block_duration_ms() if max_block_ms is None else max_block_ms
+    history_ms = caption_history_ms() if history_ms is None else history_ms
     cues = []
     source_cues = 0
     bracketed_annotations = 0
     ignored_annotation_cues = 0
-    for block in re.split(r"\r?\n\s*\r?\n", text):
-        timestamp = TIMESTAMP.search(block)
-        if not timestamp:
-            continue
+    previous_text = ""
+    previous_start = -max_block_ms - 1
+    events = []
+    history = []
+    cue_lines = list(CUE_LINE.finditer(text))
+    for cue_index, cue_line in enumerate(cue_lines):
+        timestamp = TIMESTAMP.search(cue_line.group())
         source_cues += 1
-        caption_source = block[timestamp.end():].partition("\n")[2]
-        caption = html.unescape(VTT_TAG.sub("", caption_source)).strip()
-        annotations = BRACKETED_TEXT.findall(caption)
+        caption_source = text[cue_line.end():cue_lines[cue_index + 1].start() if cue_index + 1 < len(cue_lines) else len(text)].strip()
+        annotations = BRACKETED_TEXT.findall(caption_source)
         bracketed_annotations += len(annotations)
-        caption = BRACKETED_TEXT.sub("", caption)
-        caption = " ".join(DECORATION.split(caption)).strip()
         start_ms = min(to_milliseconds(timestamp.group("start")), duration_ms)
         end_ms = min(to_milliseconds(timestamp.group("end")), duration_ms)
-        if not caption or end_ms <= start_ms:
+        if end_ms <= start_ms:
+            continue
+        fragments = INLINE_TIMESTAMP.split(caption_source)
+        timed_text = [(start_ms, fragments[0])]
+        timed_text.extend(
+            (min(to_milliseconds(fragments[index]), duration_ms), fragments[index + 1])
+            for index in range(1, len(fragments), 2)
+        )
+        has_words = False
+        for fragment_start, fragment in timed_text:
+            caption = html.unescape(VTT_TAG.sub("", fragment))
+            caption = BRACKETED_TEXT.sub("", caption)
+            caption = SPEAKER_MARKER.sub(r"\1", caption)
+            caption = " ".join(DECORATION.split(caption)).strip()
+            if not caption or not start_ms <= fragment_start < end_ms:
+                continue
+            has_words = True
+            history = [entry for entry in history if fragment_start - entry[0] <= history_ms]
+            candidate = normalized_words(caption)
+            if len(candidate) >= 3 and (
+                contains_phrase(normalized_words(" ".join(entry[1] for entry in history)), candidate)
+                or contains_phrase(normalized_words(" ".join(entry[2] for entry in history)), candidate)
+            ):
+                continue
+            fresh = new_caption_text(previous_text, caption) if fragment_start - previous_start <= max_block_ms else caption
+            if fresh:
+                if events and events[-1][0] == fragment_start:
+                    previous_start_ms, previous_end_ms, previous_fragment = events[-1]
+                    events[-1] = (previous_start_ms, max(previous_end_ms, end_ms), f"{previous_fragment} {fresh}")
+                else:
+                    events.append((fragment_start, end_ms, fresh))
+                previous_text = f"{previous_text} {fresh}" if fragment_start - previous_start <= max_block_ms else fresh
+                previous_start = fragment_start
+                history.append((fragment_start, caption, fresh))
+        if not has_words:
             if annotations:
                 ignored_annotation_cues += 1
-            continue
-        block_start = start_ms
-        while block_start < end_ms:
-            block_end = min(block_start + max_block_ms, end_ms)
-            cues.append({
-                "block_index": len(cues),
-                "start_ms": block_start,
-                "end_ms": block_end,
-                "text": caption,
-                "onset_tolerance_ms": onset_tolerance_ms,
-                "score_window_start_ms": max(0, block_start - onset_tolerance_ms),
-                "score_window_end_ms": min(duration_ms, block_start + onset_tolerance_ms),
-                "score_duration_ms": block_end - block_start,
-            })
-            block_start = block_end
+    for index, (start_ms, end_ms, caption) in enumerate(events):
+        next_start = events[index + 1][0] if index + 1 < len(events) else end_ms
+        block_end = min(start_ms + max_block_ms, end_ms, max(start_ms + 1, next_start))
+        cues.append({
+            "block_index": len(cues),
+            "start_ms": start_ms,
+            "end_ms": block_end,
+            "text": caption,
+            "onset_tolerance_ms": onset_tolerance_ms,
+            "score_window_start_ms": max(0, start_ms - onset_tolerance_ms),
+            "score_window_end_ms": min(duration_ms, start_ms + onset_tolerance_ms),
+            "score_duration_ms": block_end - start_ms,
+        })
     return {
         "source_cue_count": source_cues,
         "cue_count": len(cues),
@@ -101,6 +161,7 @@ def parse_vtt_caption_bars(
         "cues": cues,
         "scoring_rule": "hit_caption_onset_within_tolerance_awards_full_caption_duration",
         "max_block_ms": max_block_ms,
+        "history_ms": history_ms,
     }
 
 
@@ -118,14 +179,16 @@ def create_caption_bars(
 ) -> dict:
     onset_tolerance_ms = configured_onset_tolerance_ms() if onset_tolerance_ms is None else onset_tolerance_ms
     max_block_ms = block_duration_ms() if max_block_ms is None else max_block_ms
+    history_ms = caption_history_ms()
     root = MEDIA_ROOT / generation
     output = root / "captions" / f"{video_id}.json"
     if output.is_file():
         try:
             cached = json.loads(output.read_text(encoding="utf-8"))
-            if (cached.get("version") == 5
+            if (cached.get("version") == CAPTION_VERSION
                     and cached.get("onset_tolerance_ms") == onset_tolerance_ms
                     and cached.get("max_block_ms") == max_block_ms
+                    and cached.get("history_ms") == history_ms
                     and isinstance(cached.get("bars"), list)):
                 return cached
         except (OSError, json.JSONDecodeError):
@@ -157,17 +220,18 @@ def create_caption_bars(
             raise ValueError(f"Legenda automática {language} indisponível")
         duration_ms = round(float(metadata.get("duration") or 0) * 1000)
         parsed = parse_vtt_caption_bars(
-            caption_path.read_text(encoding="utf-8"), duration_ms, onset_tolerance_ms, max_block_ms
+            caption_path.read_text(encoding="utf-8"), duration_ms, onset_tolerance_ms, max_block_ms, history_ms
         )
 
     result = {
-        "version": 5,
+        "version": CAPTION_VERSION,
         "video_id": video_id,
         "language": language,
         "duration_ms": duration_ms,
         "onset_tolerance_ms": onset_tolerance_ms,
         "max_block_ms": max_block_ms,
-        "timing_method": "caption_cue_start_with_full_cue_bar",
+        "history_ms": history_ms,
+        "timing_method": "native_vtt_segments_with_rolling_overlap_removed",
         **parsed,
     }
     output.parent.mkdir(parents=True, exist_ok=True)

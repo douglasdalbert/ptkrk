@@ -55,12 +55,101 @@ one complete lyric phrase
 """,
             10000,
             onset_tolerance_ms=250,
+            max_block_ms=1000,
         )["bars"]
-        self.assertEqual([bar["score_duration_ms"] for bar in bars], [1000, 1000, 500])
+        self.assertEqual([bar["text"] for bar in bars], ["one complete lyric phrase"])
+        self.assertEqual([bar["score_duration_ms"] for bar in bars], [1000])
         self.assertEqual(points_for_caption_onset(bars[0], 4900), 1.0)
         self.assertEqual(points_for_caption_onset(bars[0], 5100), 1.0)
         self.assertEqual(points_for_caption_onset(bars[0], 5251), 0.0)
-        self.assertEqual(points_for_caption_onset(bars[2], 7150), 0.5)
+
+    def test_rolling_cues_emit_only_new_words_within_block_interval(self):
+        vtt = """WEBVTT
+
+00:00:01.000 --> 00:00:01.700
+>> amanhã eu vou
+
+00:00:01.700 --> 00:00:02.400
+eu vou passear com você
+
+00:00:02.400 --> 00:00:03.000
+passear com você amanhã
+
+00:00:05.000 --> 00:00:06.000
+amanhã eu vou
+"""
+        bars = parse_vtt_caption_bars(vtt, 7000, max_block_ms=1000)["bars"]
+        self.assertEqual([bar["text"] for bar in bars], [
+            "amanhã eu vou", "passear com você", "amanhã",
+        ])
+
+    def test_inline_timestamps_keep_new_words_at_their_actual_times(self):
+        vtt = """WEBVTT
+
+00:00:01.000 --> 00:00:03.000
+<c>amanhã</c><00:00:01.600><c> você vai torcer</c>
+"""
+        bars = parse_vtt_caption_bars(vtt, 4000)["bars"]
+        self.assertEqual([(bar["start_ms"], bar["text"]) for bar in bars], [
+            (1000, "amanhã"), (1600, "você vai torcer"),
+        ])
+
+    def test_same_instant_fragments_form_one_block_and_later_cues_remove_history(self):
+        vtt = """WEBVTT
+
+00:00:01.000 --> 00:00:02.000
+amanhã<00:00:01.000> você vai torcer
+
+00:00:01.800 --> 00:00:02.800
+amanhã você vai torcer bem
+"""
+        bars = parse_vtt_caption_bars(vtt, 4000)["bars"]
+        self.assertEqual([(bar["start_ms"], bar["text"]) for bar in bars], [
+            (1000, "amanhã você vai torcer"), (1800, "bem"),
+        ])
+
+    def test_whitespace_line_does_not_detach_real_vtt_words(self):
+        vtt = """WEBVTT
+
+00:00:13.920 --> 00:00:17.230 align:start position:0%
+\x20
+sonhei<00:00:15.280><c> e</c><00:00:15.719><c> esperei</c>
+"""
+        bars = parse_vtt_caption_bars(vtt, 20000, max_block_ms=3000)["bars"]
+        self.assertEqual([(bar["start_ms"], bar["text"], bar["end_ms"]) for bar in bars], [
+            (13920, "sonhei", 15280), (15280, "e", 15719), (15719, "esperei", 17230),
+        ])
+
+    def test_repeated_escaped_speaker_markers_do_not_leak_into_words(self):
+        vtt = """WEBVTT
+
+00:00:23.000 --> 00:00:24.000
+&gt;&gt; [música]
+&gt;&gt; Chamo<00:00:23.400><c> o</c>
+"""
+        bars = parse_vtt_caption_bars(vtt, 25000)["bars"]
+        self.assertEqual([bar["text"] for bar in bars], ["Chamo", "o"])
+
+    def test_recent_repeated_phrases_are_discarded_but_expired_phrases_return(self):
+        vtt = """WEBVTT
+
+00:00:01.000 --> 00:00:01.700
+amanhã eu irei
+
+00:00:01.700 --> 00:00:02.400
+eu irei passear com você
+
+00:00:20.000 --> 00:00:21.000
+amanhã eu irei
+
+00:01:01.800 --> 00:01:02.800
+amanhã eu irei
+"""
+        bars = parse_vtt_caption_bars(vtt, 64000, max_block_ms=3000, history_ms=60000)["bars"]
+        self.assertEqual([(bar["start_ms"], bar["text"]) for bar in bars], [
+            (1000, "amanhã eu irei"), (1700, "passear com você"),
+            (61800, "amanhã eu irei"),
+        ])
 
 
 if __name__ == "__main__":

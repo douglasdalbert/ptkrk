@@ -31,11 +31,11 @@ class CaptionBarTests(unittest.TestCase):
         result = parse_vtt_caption_bars(vtt, 12000)
         self.assertEqual(
             [bar["text"] for bar in result["bars"]],
-            ["Estou cantando"] * 4,
+            ["Estou cantando"] * 2,
         )
         self.assertEqual(result["ignored_annotation_cue_count"], 4)
         self.assertEqual(result["bracketed_annotation_count"], 6)
-        self.assertEqual(result["bar_count"], 4)
+        self.assertEqual(result["bar_count"], 2)
 
     def test_prefers_automatic_caption_in_native_language(self):
         metadata = {

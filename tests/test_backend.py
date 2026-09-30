@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import subprocess
@@ -12,7 +13,7 @@ from app.main import NewRequest, create_request, remove_request, request_preview
 from app.media import create_preview, remove_unused_media
 from app.queue import enqueue_request
 from app.storage import connection, initialize
-from app.worker import process_next, recover_missing_media
+from app.worker import outdated_ready_captions, process_next, recover_missing_media
 
 
 class YoutubeCodeTests(unittest.TestCase):
@@ -69,6 +70,20 @@ class WorkerTests(unittest.TestCase):
             row = database.execute("SELECT status, title FROM requests WHERE id = 'request'").fetchone()
         self.assertEqual((row["status"], row["title"]), ("ready", "Minha música"))
         self.assertFalse(process_next())
+
+    def test_old_ready_captions_are_eligible_for_refresh(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        media_root = Path(self.directory.name) / "media"
+        captions = media_root / generation / "captions" / "dQw4w9WgXcQ.json"
+        captions.parent.mkdir(parents=True)
+        captions.write_text(json.dumps({"version": 5}), encoding="utf-8")
+        with patch("app.worker.MEDIA_ROOT", media_root):
+            self.assertEqual(outdated_ready_captions(set()), ("dQw4w9WgXcQ", generation))
+            self.assertIsNone(outdated_ready_captions({(generation, "dQw4w9WgXcQ")}))
+            captions.write_text(json.dumps({"version": 7}), encoding="utf-8")
+            self.assertIsNone(outdated_ready_captions(set()))
 
     def test_failure_marks_request_failed(self):
         with patch("app.worker.download_video", side_effect=ValueError("Falha")):

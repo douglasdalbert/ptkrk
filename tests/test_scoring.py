@@ -39,7 +39,7 @@ This is a phrase
 """,
                 2000,
             )
-            self.assertEqual([bar["score_duration_ms"] for bar in result["bars"]], [750, 750, 500])
+            self.assertEqual([bar["score_duration_ms"] for bar in result["bars"]], [750])
             self.assertEqual(result["bars"][0]["score_window_end_ms"], 100)
 
     def test_match_requires_onset_window_not_caption_duration(self):

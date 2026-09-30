@@ -24,6 +24,10 @@ def block_duration_ms() -> int:
     return integer_setting("KARAOKE_SCORE_BLOCK_MS", 1000, 100, 5000)
 
 
+def caption_history_ms() -> int:
+    return integer_setting("KARAOKE_CAPTION_HISTORY_MS", 60000, 1000, 600000)
+
+
 def onset_tolerance_ms() -> int:
     return integer_setting("KARAOKE_SCORE_TOLERANCE_MS", 100, 0, 500)
 
