@@ -516,6 +516,7 @@ function render(snapshot) {
   boostDurationMs = snapshot.boost_duration_ms ?? boostDurationMs;
   boostMultiplier = snapshot.boost_multiplier ?? boostMultiplier;
   rankingMax = snapshot.ranking_max ?? rankingMax;
+  document.querySelector("#current-score-max").textContent = String(rankingMax);
   starLowPercent = snapshot.star_low_percent ?? starLowPercent;
   starHighPercent = snapshot.star_high_percent ?? starHighPercent;
   starNicePercent = snapshot.star_nice_percent ?? starNicePercent;
@@ -537,7 +538,10 @@ function render(snapshot) {
     stopPlayback();
   }
   const leadScore = activeId && snapshot.scores?.find(score => score.singer_id === activeSingerId);
-  if (leadScore) activeScorePoints = leadScore.points;
+  if (leadScore) {
+    activeScorePoints = leadScore.points;
+    currentScoreValue.textContent = String(Math.round(activeScorePoints));
+  }
 
   const status = document.querySelector("#next-status");
   status.textContent = current ? (current.status === "ready" ? "PRÓXIMA MÚSICA" : "PREPARANDO") :
@@ -902,12 +906,6 @@ function openScorePanel({ percent, points, videoSrc = "", onClose = null }) {
       later(() => clearInterval(confetti), musicSeconds * 1000);
     }
     later(() => {
-      if (videoSrc) {
-        scoreBackdrop.currentTime = 0;
-        scoreBackdrop.volume = 0.5;
-        scoreBackdrop.muted = false;
-        scoreBackdrop.play().catch(() => {});
-      }
       later(() => closeScorePanel(true), starCloseMs);
     }, musicSeconds * 1000);
   }

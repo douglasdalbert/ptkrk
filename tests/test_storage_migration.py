@@ -102,6 +102,25 @@ class SingerMigrationTests(unittest.TestCase):
                     )
                     self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
 
+    def test_initialize_caps_existing_scores_at_configured_maximum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "karaoke.sqlite3"
+            with patch("app.storage.DATABASE_PATH", database_path), patch.dict(
+                "os.environ", {"KARAOKE_SCORE_MAX": "1000"}
+            ):
+                initialize()
+                with connection() as database:
+                    database.execute("INSERT INTO singers(id,name,session_hash) VALUES ('A','A','hash-a')")
+                    database.execute(
+                        "INSERT INTO score_history(request_id,singer_id,title,video_id,points) "
+                        "VALUES ('old','A','Song','abcdefghijk',1082)"
+                    )
+                initialize()
+                with connection() as database:
+                    self.assertEqual(database.execute(
+                        "SELECT points FROM score_history WHERE request_id = 'old'"
+                    ).fetchone()[0], 1000)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,8 @@ from app.media import MEDIA_ROOT
 from contextlib import contextmanager
 from pathlib import Path
 
+from app.scoring import max_score
+
 DATABASE_PATH = Path(os.environ.get("KARAOKE_DB_PATH", "/data/karaoke.sqlite3"))
 
 
@@ -257,6 +259,7 @@ def initialize() -> None:
                 )
             database.execute("DROP TABLE performance_participants")
             database.execute("DROP TABLE performances")
+        database.execute("UPDATE score_history SET points = ? WHERE points > ?", (max_score(), max_score()))
         database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         for category in ("videos", "previews"):

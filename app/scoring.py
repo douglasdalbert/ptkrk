@@ -426,7 +426,7 @@ def finalize_performance(
         "INSERT OR IGNORE INTO score_history(request_id, singer_id, title, video_id, points, preview, participants) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [(request_id, participant["singer_id"], item["title"] or item["video_id"], item["video_id"],
-          lead_score["points"] if lead_score else 0, preview, json.dumps(participants))
+                    min(lead_score["points"], max_score()) if lead_score else 0, preview, json.dumps(participants))
          for participant in participants],
     )
     return performance_record(database, request_id)

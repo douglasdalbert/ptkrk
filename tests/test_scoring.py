@@ -221,6 +221,15 @@ This is a phrase
                     self.assertEqual((missed["points"], missed["boosted"]), (625.0, False))
                     self.assertEqual(score_snapshot(database, "song", sidecar)[0]["points"], 625.0)
 
+                    database.execute(
+                        "UPDATE song_scores SET hit_blocks = '[0, 1, 2, 3]', "
+                        "boosted_blocks = '[1, 2]', score_units = 4 WHERE request_id = 'song'"
+                    )
+                    self.assertEqual(score_snapshot(database, "song", sidecar)[0]["points"], 1250.0)
+                    result = finalize_performance(database, "song", sidecar, Path(directory) / "missing.jpg")
+                    self.assertEqual(result["points"], 1000.0)
+                    self.assertEqual(scoreboard_snapshot(database, "singer")["party_best"]["points"], 1000.0)
+
     def test_finished_performance_preserves_group_record_and_competition_rank(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "karaoke.sqlite3"
