@@ -54,6 +54,7 @@ button { cursor:pointer; }
 .actions { display:flex; flex-direction:column; gap:5px; min-height:0; overflow-y:auto; padding:9px; border-left:1px solid #424849; }
 .actions button { display:flex; align-items:center; justify-content:space-between; gap:6px; min-height:48px; padding:7px 8px; border:1px solid #50575a; border-radius:3px; background:#272b2d; color:var(--white); text-align:left; font-size:12px; }
 .actions button:hover,.actions button:focus-visible { border-color:var(--lime); }
+.actions button:disabled { opacity:.45; cursor:not-allowed; border-color:#50575a; }
 .actions kbd { padding:2px 4px; border:1px solid #636d6e; border-radius:2px; color:var(--lime); white-space:nowrap; font-size:10px; }
 .actions .keycaps { display:flex; flex:none; gap:3px; }
 .join { display:flex; flex-direction:column; align-items:center; min-width:0; padding:7px 8px; border-left:1px solid #424849; }

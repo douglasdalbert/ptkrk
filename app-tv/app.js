@@ -438,6 +438,11 @@ playButton.addEventListener("click", async () => {
   try { await video.play(); playButton.hidden = true; } catch { error.textContent = "Não foi possível reproduzir o vídeo."; }
 });
 
+const playAction = document.querySelector("#play-action");
+new MutationObserver(() => { playAction.disabled = playButton.hidden; })
+  .observe(playButton, {attributes:true, attributeFilter:["hidden"]});
+playAction.addEventListener("click", () => playButton.click());
+
 video.addEventListener("ended", async () => {
   if (!activeId || finishing) return;
   finishing = true;
@@ -468,6 +473,9 @@ document.addEventListener("keydown", event => {
     moveTrack(event.key === "ArrowDown" ? 1 : -1);
   } else if (event.key.toLowerCase() === "c" && !event.ctrlKey && !event.altKey) {
     cycleColor();
+  } else if (event.key === " " && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    if (!playAction.disabled) playButton.click();
   }
 });
 
