@@ -36,7 +36,7 @@ def outdated_ready_captions(excluded: set[tuple[str, str]]) -> tuple[str, str] |
             continue
         path = MEDIA_ROOT / generation / "captions" / f"{video_id}.json"
         if not path.is_file():
-            continue
+            return video_id, generation
         try:
             if json.loads(path.read_text(encoding="utf-8")).get("version") == CAPTION_VERSION:
                 continue

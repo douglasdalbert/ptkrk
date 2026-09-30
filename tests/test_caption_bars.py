@@ -1,6 +1,6 @@
 import unittest
 
-from app.captions import parse_vtt_caption_bars, select_native_caption_language, to_milliseconds
+from app.captions import parse_vtt_caption_bars, select_caption_track, select_native_caption_language, to_milliseconds
 
 
 class CaptionBarTests(unittest.TestCase):
@@ -26,15 +26,18 @@ class CaptionBarTests(unittest.TestCase):
 [Singing] Estou cantando
 
 00:00:10.000 --> 00:00:12.000
+(music is touching something)
+
+00:00:12.000 --> 00:00:14.000
 ♪ [Music] ♪
 """
-        result = parse_vtt_caption_bars(vtt, 12000)
+        result = parse_vtt_caption_bars(vtt, 14000)
         self.assertEqual(
             [bar["text"] for bar in result["bars"]],
             ["Estou cantando"] * 2,
         )
-        self.assertEqual(result["ignored_annotation_cue_count"], 4)
-        self.assertEqual(result["bracketed_annotation_count"], 6)
+        self.assertEqual(result["ignored_annotation_cue_count"], 5)
+        self.assertEqual(result["bracketed_annotation_count"], 7)
         self.assertEqual(result["bar_count"], 2)
 
     def test_prefers_automatic_caption_in_native_language(self):
@@ -43,6 +46,19 @@ class CaptionBarTests(unittest.TestCase):
             "automatic_captions": {"pt": [], "en": [], "en-orig": []},
         }
         self.assertEqual(select_native_caption_language(metadata), "en-orig")
+        self.assertEqual(select_caption_track(metadata), ("en-orig", True))
+
+    def test_prefers_available_subtitles_when_video_language_is_missing(self):
+        metadata = {
+            "language": None,
+            "subtitles": {"en-nP7-2PuUl7o": []},
+            "automatic_captions": {"en": []},
+        }
+        self.assertEqual(select_caption_track(metadata), ("en-nP7-2PuUl7o", False))
+
+    def test_falls_back_to_automatic_when_no_subtitles_are_available(self):
+        metadata = {"language": None, "subtitles": {}, "automatic_captions": {"en": []}}
+        self.assertEqual(select_caption_track(metadata), ("en", True))
 
     def test_uses_native_language_when_original_variant_is_unavailable(self):
         metadata = {"language": "pt-BR", "automatic_captions": {"en": [], "pt": []}}

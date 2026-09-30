@@ -16,10 +16,10 @@ TIMESTAMP = re.compile(
 CUE_LINE = re.compile(r"^\d{2}:\d{2}:\d{2}\.\d{3}\s+-->[^\r\n]*(?:\r?\n|$)", re.MULTILINE)
 VTT_TAG = re.compile(r"<[^>]*>")
 INLINE_TIMESTAMP = re.compile(r"<(?P<time>\d{2}:\d{2}:\d{2}\.\d{3})>")
-BRACKETED_TEXT = re.compile(r"\[[^\]\r\n]*\]")
+BRACKETED_TEXT = re.compile(r"(?:\[[^\]\r\n]*\]|\([^\)\r\n]*\))")
 DECORATION = re.compile(r"[\s♪♫♬♩]+")
 SPEAKER_MARKER = re.compile(r"(^|\n)[^\S\r\n]*>>[^\S\r\n]*")
-CAPTION_VERSION = 8
+CAPTION_VERSION = 9
 
 
 def normalized_words(text: str) -> list[str]:
@@ -85,6 +85,17 @@ def select_native_caption_language(metadata: dict) -> str:
     if len(original_keys) == 1:
         return original_keys[0]
     raise ValueError("Não foi possível identificar a legenda automática no idioma nativo")
+
+
+def select_caption_track(metadata: dict) -> tuple[str, bool]:
+    if not metadata.get("language"):
+        subtitles = metadata.get("subtitles") or {}
+        if subtitles:
+            return next(iter(subtitles)), False
+        automatic = metadata.get("automatic_captions") or {}
+        if automatic:
+            return next(iter(automatic)), True
+    return select_native_caption_language(metadata), True
 
 
 def parse_vtt_caption_bars(
@@ -220,7 +231,7 @@ def create_caption_bars(
     with YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True,
                     "noplaylist": True, "socket_timeout": 20}) as downloader:
         metadata = downloader.extract_info(url, download=False)
-    language = select_native_caption_language(metadata)
+    language, automatic = select_caption_track(metadata)
 
     with tempfile.TemporaryDirectory(prefix="karaoke-captions-") as temporary_directory:
         temporary_path = Path(temporary_directory)
@@ -228,7 +239,8 @@ def create_caption_bars(
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
-            "writeautomaticsub": True,
+            "writeautomaticsub": automatic,
+            "writesubtitles": not automatic,
             "subtitleslangs": [language],
             "subtitlesformat": "vtt",
             "noplaylist": True,

@@ -24,8 +24,9 @@ button { cursor:pointer; }
 .lyric-block[data-result="hit"] { background:#5ac8e4; border-color:#d4f7ff; }
 .lyric-block[data-result="miss"] { background:#f47783; border-color:#ffd7db; }
 .lyric-block[data-result="waiting"] { animation: pending-score 520ms ease-in-out infinite alternate; }
-.lyric-block.offcue-penalty { left:50%; z-index:4; transform:translateX(-50%); background:#f47783; border-color:#ffd7db; color:#241013; }
+.lyric-block.offcue-penalty { left:50%; z-index:4; animation: offcue-exit 3s linear forwards; background:#f47783; border-color:#ffd7db; color:#241013; }
 @keyframes pending-score { from { background:#5ac8e4; border-color:#d4f7ff; } to { background:#f47783; border-color:#ffd7db; } }
+@keyframes offcue-exit { from { transform:translateX(-50%); } to { transform:translateX(calc(-50vw - 100%)); } }
 #live-score { position:absolute; z-index:3; top:12px; left:50%; transform:translateX(-50%); padding:8px 14px; border:1px solid var(--lime); background:#090d0dd9; color:var(--lime); font-size:clamp(14px,1.8vw,24px); font-weight:800; }
 #play { pointer-events:auto; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:18px; }
 #intermission { position:absolute; inset:0; display:block; padding:0; background:radial-gradient(ellipse at 8% 100%,#254c422e,transparent 60%),var(--ink); }

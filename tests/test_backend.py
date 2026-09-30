@@ -78,8 +78,10 @@ class WorkerTests(unittest.TestCase):
         media_root = Path(self.directory.name) / "media"
         captions = media_root / generation / "captions" / "dQw4w9WgXcQ.json"
         captions.parent.mkdir(parents=True)
-        captions.write_text(json.dumps({"version": 5}), encoding="utf-8")
         with patch("app.worker.MEDIA_ROOT", media_root):
+            self.assertEqual(outdated_ready_captions(set()), ("dQw4w9WgXcQ", generation))
+            self.assertIsNone(outdated_ready_captions({(generation, "dQw4w9WgXcQ")}))
+            captions.write_text(json.dumps({"version": 5}), encoding="utf-8")
             self.assertEqual(outdated_ready_captions(set()), ("dQw4w9WgXcQ", generation))
             self.assertIsNone(outdated_ready_captions({(generation, "dQw4w9WgXcQ")}))
             captions.write_text(json.dumps({"version": 8}), encoding="utf-8")

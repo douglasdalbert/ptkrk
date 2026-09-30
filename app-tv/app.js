@@ -234,13 +234,13 @@ function showOffcuePenalty(positionMs) {
   penalty.dataset.result = "miss";
   penalty.textContent = `-${offCuePenalty} ponto${offCuePenalty === 1 ? "" : "s"}`;
   penalty.style.setProperty("--lane", "0");
+  penalty.addEventListener("animationend", () => penalty.remove(), { once: true });
   lyricText.append(penalty);
   console.log("[app-tv] Penalidade off-cue", {
     request_id: activeId,
     position_ms: positionMs,
     penalty: `-${offCuePenalty} ponto${offCuePenalty === 1 ? "" : "s"}`,
   });
-  setTimeout(() => penalty.remove(), 1400);
 }
 
 function evaluateOffCueSpeech(currentPositionMs) {
