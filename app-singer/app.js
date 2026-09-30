@@ -54,8 +54,7 @@ let silenceStartedAt = null;
 let silenceStartedPosition = null;
 let microphoneSpeaking = false;
 let microphoneStatePositioned = false;
-let currentScores = [];
-let currentRankingMax = 1000;
+let currentScoreboard = null;
 let scoredRequestId = null;
 let offCueRearmMs = 500;
 let microphoneRmsThreshold = 0.04;
@@ -145,8 +144,7 @@ function clearSession() {
   currentSkip = null;
   currentSong = null;
   playbackClock = null;
-  currentScores = [];
-  currentRankingMax = 1000;
+  currentScoreboard = null;
   scoredRequestId = null;
   stopMicrophone();
   allowSkip = false;
@@ -262,9 +260,7 @@ function connect() {
     if (message.type === "score_update") {
       if (message.singer_id !== singer?.singer_id) return;
       const action = message.result === "hit" ? "Acertou" : "Som fora de um bloco";
-      scoreStatus.textContent = `${action}: ${message.hits} acertos, ${message.penalties} erros. ${message.points} / ${message.ranking_max} pontos.`;
-      document.querySelector("#song-points").textContent = message.points.toFixed(1);
-      document.querySelector("#song-rank").textContent = `${message.points.toFixed(1)} / ${message.ranking_max}`;
+      scoreStatus.textContent = `${action}: ${message.hits} acertos, ${message.penalties} erros. ${Math.round(message.points)} pontos.`;
       return;
     }
     if (message.type === "group_state") {
@@ -285,8 +281,7 @@ function connect() {
       connectionState("Conectado", "connected");
       latestItems = message.items;
       partySingers = message.singers || [];
-      currentScores = message.scores || [];
-      currentRankingMax = message.ranking_max || 1000;
+      currentScoreboard = message.scoreboards?.[singer.singer_id] || null;
       offCueRearmMs = message.off_cue_rearm_ms || 500;
       microphoneRmsThreshold = message.microphone_rms_threshold || 0.04;
       microphoneSilenceMs = message.microphone_silence_ms ?? 300;
@@ -557,10 +552,66 @@ function renderSingingOverlay(invitation, items) {
 }
 
 function renderScores() {
-  const score = currentScores.find(item => item.singer_id === singer?.singer_id);
-  document.querySelector("#song-points").textContent = score ? score.points.toFixed(1) : "0.0";
-  document.querySelector("#song-rank").textContent = score ?
-    `${score.points.toFixed(1)} / ${score.ranking_max}` : `0.0 / ${currentRankingMax}`;
+  document.querySelector("#personal-rank").textContent = `#${currentScoreboard?.personal_rank || 0}`;
+  renderScoreRecord(document.querySelector("#personal-best"), currentScoreboard?.personal_best);
+  renderScoreRecord(document.querySelector("#party-best"), currentScoreboard?.party_best);
+}
+
+function renderScoreRecord(container, record) {
+  container.replaceChildren();
+  if (!record) {
+    const empty = document.createElement("p");
+    empty.className = "score-empty";
+    empty.textContent = "Nenhuma pontuação ainda.";
+    container.append(empty);
+    return;
+  }
+  const placeholder = document.createElement("span");
+  placeholder.className = "score-preview-empty";
+  placeholder.textContent = "♫";
+  if (record.has_preview) performancePreviewFor(record, placeholder);
+
+  const details = document.createElement("div");
+  details.className = "score-details";
+  const title = document.createElement("strong");
+  title.textContent = record.title;
+  const participants = document.createElement("small");
+  record.participants.forEach((participant, index) => {
+    if (index) participants.append(document.createTextNode(" + "));
+    const name = document.createElement("span");
+    name.textContent = participant.name;
+    if (participant.singer_id === singer?.singer_id) name.className = "current-singer";
+    participants.append(name);
+  });
+  details.append(title, participants);
+
+  const points = document.createElement("strong");
+  points.className = "score-points";
+  points.textContent = String(Math.round(record.points));
+  container.append(placeholder, details, points);
+}
+
+function performancePreviewFor(record, placeholder) {
+  const cacheKey = `performance:${record.request_id}`;
+  let cached = previewCache.get(cacheKey);
+  if (!cached) {
+    cached = { url: null, task: null };
+    const previewSinger = singer;
+    cached.task = fetch(`/api/performances/${encodeURIComponent(record.request_id)}/preview`, {
+      headers: { Authorization: `Bearer ${previewSinger.token}` },
+    }).then(async response => {
+      if (singer !== previewSinger || !response.ok) return;
+      cached.url = URL.createObjectURL(await response.blob());
+    }).catch(() => {});
+    previewCache.set(cacheKey, cached);
+  }
+  cached.task?.then(() => {
+    if (!placeholder.isConnected || !cached.url) return;
+    const image = document.createElement("img");
+    image.src = cached.url;
+    image.alt = "";
+    placeholder.replaceWith(image);
+  });
 }
 
 function estimatePlaybackPosition() {

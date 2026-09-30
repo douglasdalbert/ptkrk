@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.captions import parse_vtt_caption_bars
-from app.scoring import block_duration_ms, boost_duration_ms, boost_fill_percent, boost_multiplier, matching_block, max_score, microphone_rms_threshold, microphone_silence_ms, onset_tolerance_ms, record_block_result, record_offcue_penalty, record_onset, score_lane_count, score_snapshot, score_value
+from app.scoring import block_duration_ms, boost_duration_ms, boost_fill_percent, boost_multiplier, finalize_performance, matching_block, max_score, microphone_rms_threshold, microphone_silence_ms, onset_tolerance_ms, record_block_result, record_offcue_penalty, record_onset, scoreboard_snapshot, score_lane_count, score_snapshot, score_value
 from app.storage import connection, initialize
 
 
@@ -220,6 +220,72 @@ This is a phrase
                     self.assertIsNone(repeated)
                     self.assertEqual((missed["points"], missed["boosted"]), (625.0, False))
                     self.assertEqual(score_snapshot(database, "song", sidecar)[0]["points"], 625.0)
+
+    def test_finished_performance_preserves_group_record_and_competition_rank(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "karaoke.sqlite3"
+            with patch("app.storage.DATABASE_PATH", database_path):
+                initialize()
+                captions = Path(directory) / "captions.json"
+                captions.write_text(json.dumps({"bars": [
+                    {"block_index": index} for index in range(10)
+                ]}), encoding="utf-8")
+                preview = Path(directory) / "preview.jpg"
+                preview.write_bytes(b"jpeg")
+                with connection() as database:
+                    for singer_id in ("A", "B", "C", "D"):
+                        database.execute(
+                            "INSERT INTO singers(id,name,session_hash) VALUES (?,?,?)",
+                            (singer_id, singer_id, singer_id),
+                        )
+                    database.execute(
+                        "INSERT INTO requests(id,singer_id,video_id,status,title) "
+                        "VALUES ('AB','A','abcdefghijk','ready','Dueto')"
+                    )
+                    database.execute(
+                        "INSERT INTO backvocals(request_id,singer_id,accepted,joined) VALUES ('AB','B',1,1)"
+                    )
+                    database.execute(
+                        "INSERT INTO song_scores(request_id,singer_id,score_units) VALUES ('AB','A',10)"
+                    )
+                    record = finalize_performance(database, "AB", captions, preview)
+                    self.assertEqual(record["points"], 1000.0)
+                    self.assertEqual([person["singer_id"] for person in record["participants"]], ["A", "B"])
+                    self.assertTrue(record["has_preview"])
+                    self.assertEqual(
+                        [row[0] for row in database.execute(
+                            "SELECT singer_id FROM score_history WHERE request_id = 'AB' ORDER BY rowid"
+                        )],
+                        ["A", "B"],
+                    )
+
+                    for request_id, singer_id, points in (("D1", "D", 800), ("C1", "C", 500)):
+                        database.execute(
+                            "INSERT INTO requests(id,singer_id,video_id,status,title) VALUES (?,?,?,?,?)",
+                            (request_id, singer_id, "abcdefghijk", "played", request_id),
+                        )
+                        participants = json.dumps([{"singer_id": singer_id, "name": singer_id}])
+                        database.execute(
+                            "INSERT INTO score_history(request_id,singer_id,title,video_id,points,participants) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (request_id, singer_id, request_id, "abcdefghijk", points, participants),
+                        )
+                    database.execute(
+                        "UPDATE score_history SET points = 800 WHERE request_id = 'AB'"
+                    )
+                    self.assertEqual(scoreboard_snapshot(database, "A")["personal_rank"], 1)
+                    self.assertEqual(scoreboard_snapshot(database, "B")["personal_rank"], 1)
+                    self.assertEqual(scoreboard_snapshot(database, "D")["personal_rank"], 1)
+                    self.assertEqual(scoreboard_snapshot(database, "C")["personal_rank"], 4)
+                    self.assertEqual(scoreboard_snapshot(database, "B")["party_best"]["request_id"], "AB")
+
+                captions.unlink()
+                preview.unlink()
+                with connection() as database:
+                    self.assertEqual(
+                        database.execute("SELECT preview FROM score_history WHERE request_id = 'AB' LIMIT 1").fetchone()[0],
+                        b"jpeg",
+                    )
 
 
 if __name__ == "__main__":

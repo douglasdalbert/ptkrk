@@ -387,3 +387,81 @@ def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: 
             "ranking_max": max_score(),
         })
     return scores
+
+
+def finalize_performance(
+    database: sqlite3.Connection,
+    request_id: str,
+    caption_path: Path,
+    preview_path: Path,
+) -> dict | None:
+    item = database.execute(
+        "SELECT singer_id, video_id, title FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    if item is None:
+        return None
+    scores = score_snapshot(database, request_id, caption_path)
+    lead_score = next((score for score in scores if score["singer_id"] == item["singer_id"]), None)
+    try:
+        preview = preview_path.read_bytes() if preview_path.is_file() else None
+    except OSError:
+        preview = None
+    participants = [{"singer_id": item["singer_id"], "name": database.execute(
+        "SELECT name FROM singers WHERE id = ?", (item["singer_id"],)
+    ).fetchone()[0]}, *[dict(row) for row in database.execute(
+            "SELECT singers.id AS singer_id, singers.name FROM backvocals "
+            "JOIN singers ON singers.id = backvocals.singer_id "
+            "WHERE backvocals.request_id = ? AND backvocals.joined = 1 ORDER BY backvocals.rowid",
+            (request_id,),
+        )]]
+    database.executemany(
+        "INSERT OR IGNORE INTO score_history(request_id, singer_id, title, video_id, points, preview, participants) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(request_id, participant["singer_id"], item["title"] or item["video_id"], item["video_id"],
+          lead_score["points"] if lead_score else 0, preview, json.dumps(participants))
+         for participant in participants],
+    )
+    return performance_record(database, request_id)
+
+
+def performance_record(database: sqlite3.Connection, request_id: str) -> dict | None:
+    row = database.execute(
+        "SELECT request_id, title, video_id, points, preview IS NOT NULL AS has_preview, participants "
+        "FROM score_history WHERE request_id = ? LIMIT 1",
+        (request_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        **{key: row[key] for key in ("request_id", "title", "video_id", "points", "has_preview")},
+        "participants": json.loads(row["participants"]),
+    }
+
+
+def scoreboard_snapshot(database: sqlite3.Connection, singer_id: str | None = None) -> dict:
+    personal = None
+    rank = None
+    if singer_id:
+        personal_row = database.execute(
+            "SELECT request_id FROM score_history WHERE singer_id = ? "
+            "ORDER BY points DESC, finished_at DESC, rowid DESC LIMIT 1",
+            (singer_id,),
+        ).fetchone()
+        if personal_row:
+            personal = performance_record(database, personal_row["request_id"])
+            rank = 1 + database.execute(
+                "SELECT COUNT(*) FROM ("
+                "SELECT singer_id, MAX(points) AS best_points FROM score_history GROUP BY singer_id"
+                ") WHERE best_points > ?",
+                (personal["points"],),
+            ).fetchone()[0]
+    party_row = database.execute(
+            "SELECT request_id FROM score_history ORDER BY points DESC, "
+            "CASE WHEN singer_id = ? THEN 0 ELSE 1 END, finished_at DESC, rowid DESC LIMIT 1",
+            (singer_id,),
+    ).fetchone()
+    return {
+        "personal_best": personal,
+        "personal_rank": rank,
+        "party_best": performance_record(database, party_row["request_id"]) if party_row else None,
+    }

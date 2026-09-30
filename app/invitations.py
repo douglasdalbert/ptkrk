@@ -1,7 +1,8 @@
 import sqlite3
 
-from app.media import remove_unused_media
+from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import PROTECTED_QUEUE_SIZE
+from app.scoring import finalize_performance
 
 SKIP_SECONDS = 5
 
@@ -129,9 +130,15 @@ def finish_song(database: sqlite3.Connection, request_id: str, now: float) -> bo
     if current is None or current["request_id"] != request_id or not current["accepted"] or skip_state(database):
         return False
     item = database.execute("SELECT video_id FROM requests WHERE id = ?", (request_id,)).fetchone()
+    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+    finalize_performance(
+        database,
+        request_id,
+        MEDIA_ROOT / generation / "captions" / f"{item['video_id']}.json",
+        MEDIA_ROOT / generation / "previews" / f"{item['video_id']}.jpg",
+    )
     database.execute("UPDATE requests SET status = 'played' WHERE id = ?", (request_id,))
     database.execute("DELETE FROM ready_queue WHERE request_id = ?", (request_id,))
-    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
     remove_unused_media(database, item["video_id"], generation)
     database.execute("DELETE FROM group_rooms WHERE request_id = ?", (request_id,))
     database.execute("DELETE FROM backvocals WHERE request_id = ?", (request_id,))

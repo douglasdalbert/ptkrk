@@ -47,9 +47,15 @@
             <p id="request-message" class="message" role="status"></p>
           </form>
 
-          <div class="scores" aria-label="Pontuação da apresentação">
-            <div><span>PONTOS DA MÚSICA</span><strong id="song-points">—</strong></div>
-            <div><span>RANKING</span><strong id="song-rank">— / 1000</strong></div>
+          <div class="scores" aria-label="Melhores pontuações">
+            <section class="score-record" aria-labelledby="personal-best-label">
+              <header><span id="personal-best-label">SUA MELHOR PONTUAÇÃO</span><strong id="personal-rank">#0</strong></header>
+              <div id="personal-best" class="score-record-body"></div>
+            </section>
+            <section class="score-record" aria-labelledby="party-best-label">
+              <header><span id="party-best-label">MELHOR PONTUAÇÃO DA FESTA</span></header>
+              <div id="party-best" class="score-record-body"></div>
+            </section>
           </div>
 
           <section class="requests" aria-labelledby="requests-title">

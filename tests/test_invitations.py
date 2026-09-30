@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,13 +88,31 @@ class InvitationTests(unittest.TestCase):
         self.assertEqual(accept_request("A1", "A")["status"], "accepted")
         self.assertEqual(accept_request("A1", "B")["status"], "accepted")
         with connection() as database:
-            self.assertTrue(finish_song(database, "A1", 150))
+            with patch("app.invitations.MEDIA_ROOT", Path(self.directory.name)):
+                self.assertTrue(finish_song(database, "A1", 150))
+            records = database.execute(
+                "SELECT singer_id, points, title, participants FROM score_history "
+                "WHERE request_id = 'A1' ORDER BY rowid"
+            ).fetchall()
+            self.assertEqual(
+                [(record["singer_id"], record["points"], record["title"]) for record in records],
+                [("A", 0, "glvVYIhdWlU"), ("B", 0, "glvVYIhdWlU")],
+            )
+            self.assertEqual(
+                [participant["singer_id"] for participant in json.loads(records[0]["participants"])],
+                ["A", "B"],
+            )
             self.assertEqual(
                 database.execute("SELECT COUNT(*) FROM group_rooms WHERE request_id = 'A1'").fetchone()[0], 0,
             )
             self.assertEqual(
                 database.execute("SELECT COUNT(*) FROM backvocals WHERE request_id = 'A1'").fetchone()[0], 0,
             )
+        scoreboards = party_snapshot()["scoreboards"]
+        self.assertEqual(scoreboards["A"]["personal_best"]["request_id"], "A1")
+        self.assertEqual(scoreboards["B"]["personal_best"]["request_id"], "A1")
+        self.assertEqual(scoreboards["A"]["personal_rank"], 1)
+        self.assertEqual(scoreboards["B"]["personal_rank"], 1)
 
     def test_only_owner_can_accept_once_without_auto_deadline(self):
         with connection() as database:

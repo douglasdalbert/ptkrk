@@ -51,6 +51,57 @@ class SingerMigrationTests(unittest.TestCase):
                         "SELECT name FROM sqlite_master WHERE type='table' AND name='clients'"
                     ).fetchone())
 
+    def test_performance_records_migrate_to_one_score_history_row_per_singer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "karaoke.sqlite3"
+            with patch("app.storage.DATABASE_PATH", database_path):
+                initialize()
+                with connection() as database:
+                    database.execute(
+                        "INSERT INTO singers(id,name,session_hash) VALUES "
+                        "('A','A','hash-a'), ('B','B','hash-b')"
+                    )
+                    database.execute(
+                        "INSERT INTO requests(id,singer_id,video_id,status,title) "
+                        "VALUES ('AB','A','abcdefghijk','played','Dueto')"
+                    )
+                    database.executescript(
+                        """
+                        CREATE TABLE performances (
+                            request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+                            title TEXT NOT NULL, video_id TEXT NOT NULL, points REAL NOT NULL,
+                            preview BLOB, finished_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE performance_participants (
+                            request_id TEXT NOT NULL REFERENCES performances(request_id) ON DELETE CASCADE,
+                            singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                            PRIMARY KEY (request_id, singer_id)
+                        );
+                        INSERT INTO performances(request_id,title,video_id,points,preview)
+                            VALUES ('AB','Dueto','abcdefghijk',800,X'6A706567');
+                        INSERT INTO performance_participants(request_id,singer_id)
+                            VALUES ('AB','A'), ('AB','B');
+                        """
+                    )
+
+                initialize()
+                with connection() as database:
+                    records = database.execute(
+                        "SELECT singer_id, title, points, preview, participants FROM score_history ORDER BY rowid"
+                    ).fetchall()
+                    self.assertEqual(
+                        [(row["singer_id"], row["title"], row["points"], row["preview"]) for row in records],
+                        [("A", "Dueto", 800, b"jpeg"), ("B", "Dueto", 800, b"jpeg")],
+                    )
+                    self.assertEqual(
+                        database.execute(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+                            "AND name IN ('performances', 'performance_participants')"
+                        ).fetchone()[0],
+                        0,
+                    )
+                    self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

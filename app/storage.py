@@ -162,6 +162,19 @@ def initialize() -> None:
                 offcue_window INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS score_history (
+                request_id TEXT NOT NULL,
+                singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                points REAL NOT NULL DEFAULT 0,
+                preview BLOB,
+                participants TEXT NOT NULL DEFAULT '[]',
+                finished_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (request_id, singer_id)
+            );
+            CREATE INDEX IF NOT EXISTS score_history_singer_points_idx
+                ON score_history(singer_id, points DESC, finished_at DESC);
             CREATE TABLE IF NOT EXISTS invitation (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 request_id TEXT NOT NULL REFERENCES requests(id),
@@ -221,6 +234,26 @@ def initialize() -> None:
             database.execute("ALTER TABLE song_scores ADD COLUMN score_units INTEGER")
         if "boosted_blocks" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
             database.execute("ALTER TABLE song_scores ADD COLUMN boosted_blocks TEXT NOT NULL DEFAULT '[]'")
+        if (database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'performances'").fetchone()
+                and database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'performance_participants'").fetchone()):
+            for performance in database.execute(
+                "SELECT request_id, title, video_id, points, preview, finished_at FROM performances"
+            ).fetchall():
+                participants = [dict(row) for row in database.execute(
+                    "SELECT singers.id AS singer_id, singers.name FROM performance_participants "
+                    "JOIN singers ON singers.id = performance_participants.singer_id "
+                    "WHERE performance_participants.request_id = ? ORDER BY performance_participants.rowid",
+                    (performance["request_id"],),
+                )]
+                database.executemany(
+                    "INSERT OR IGNORE INTO score_history(request_id, singer_id, title, video_id, points, preview, "
+                    "participants, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(performance["request_id"], participant["singer_id"], performance["title"],
+                      performance["video_id"], performance["points"], performance["preview"],
+                      json.dumps(participants), performance["finished_at"]) for participant in participants],
+                )
+            database.execute("DROP TABLE performance_participants")
+            database.execute("DROP TABLE performances")
         database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         for category in ("videos", "previews"):

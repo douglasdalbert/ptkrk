@@ -117,11 +117,20 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .singing-overlay #microphone-button { width: min(320px, 88vw); }
 .microphone-waveform { display: block; width: min(320px, 88vw); height: 48px; }
 @keyframes singing-pulse { 50% { transform: scale(1.05); box-shadow: 0 0 58px #c7fa4552; } }
-.scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.scores div { display: grid; gap: 5px; }
-.scores div + div { padding-left: 16px; border-left: 1px solid var(--border); }
-.scores span { color: var(--muted); font-size: 10px; font-weight: 800; }
-.scores strong { color: var(--lime); font-family: Georgia, serif; font-size: 27px; font-weight: 400; }
+.scores { display: grid; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.score-record { min-width: 0; padding: 14px 0; }
+.score-record + .score-record { border-top: 1px solid var(--border); }
+.score-record header { display: flex; min-height: 20px; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.score-record header span { color: var(--muted); font-size: 10px; font-weight: 800; }
+.score-record header strong { color: var(--cyan); font-family: Georgia, serif; font-size: 17px; font-weight: 400; }
+.score-record-body { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.score-record-body img, .score-preview-empty { width: 72px; height: 41px; flex: none; object-fit: cover; border-radius: 3px; background: #34363a; }
+.score-preview-empty { display: grid; place-items: center; color: var(--muted); }
+.score-details { min-width: 0; flex: 1; }
+.score-details > strong { display: block; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.score-details small { display: block; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.score-record-body .score-points { flex: none; color: var(--lime); font-family: Georgia, serif; font-size: 29px; font-weight: 400; }
+.score-empty { margin: 8px 0; color: var(--muted); font-size: 12px; }
 .requests { margin-top: 28px; }
 .current-singer { color: var(--lime); font-weight: 700; }
 .section-heading { display: flex; align-items: baseline; gap: 10px; }

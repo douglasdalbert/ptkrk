@@ -33,6 +33,7 @@ from app.scoring import (
     record_block_result,
     record_offcue_penalty,
     record_onset,
+    scoreboard_snapshot,
     score_lane_count,
     score_snapshot,
     star_close_ms,
@@ -187,6 +188,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         boost_ready = bool(invitation and boost_state and boost_state.get("ready")
                            and boost_state.get("request_id") == invitation["request_id"])
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
+        scoreboards = {singer["id"]: scoreboard_snapshot(database, singer["id"]) for singer in singers}
         scores = []
         if invitation:
             generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
@@ -206,7 +208,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
             active_bars = []
     snapshot = {"type": "requests", "items": request_snapshot(), "invitation": invitation,
                 "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
-                "scores": scores, "ranking_max": max_score(),
+                "scores": scores, "scoreboards": scoreboards, "ranking_max": max_score(),
                 "score_tolerance_ms": onset_tolerance_ms(),
                 "score_block_ms": block_duration_ms(),
                 "score_lane_count": score_lane_count(),
@@ -776,6 +778,29 @@ def create_singer(payload: NewSinger) -> dict[str, str]:
                     [(singer_id, duplicate_id) for duplicate_id in duplicates],
                 )
                 for duplicate_id in duplicates:
+                    database.execute(
+                        "UPDATE OR IGNORE score_history SET singer_id = ? WHERE singer_id = ?",
+                        (singer_id, duplicate_id),
+                    )
+                    database.execute("DELETE FROM score_history WHERE singer_id = ?", (duplicate_id,))
+                    history_rows = database.execute(
+                        "SELECT DISTINCT request_id, participants FROM score_history"
+                    ).fetchall()
+                    for history in history_rows:
+                        participants = json.loads(history["participants"])
+                        changed = False
+                        merged = []
+                        for participant in participants:
+                            if participant["singer_id"] == duplicate_id:
+                                participant = {"singer_id": singer_id, "name": name}
+                                changed = True
+                            if not any(entry["singer_id"] == participant["singer_id"] for entry in merged):
+                                merged.append(participant)
+                        if changed:
+                            database.execute(
+                                "UPDATE score_history SET participants = ? WHERE request_id = ?",
+                                (json.dumps(merged), history["request_id"]),
+                            )
                     vocals = database.execute(
                         "SELECT request_id, accepted, joined, score_eligible FROM backvocals WHERE singer_id = ?",
                         (duplicate_id,),
@@ -877,6 +902,18 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
 @app.get("/api/requests")
 def list_requests(singer_id: str = Depends(authenticated_singer)) -> list[dict]:
     return request_snapshot()
+
+
+@app.get("/api/performances/{request_id}/preview")
+def performance_preview(request_id: str, singer_id: str = Depends(authenticated_singer)) -> StreamingResponse:
+    del singer_id
+    with connection() as database:
+        row = database.execute(
+            "SELECT preview FROM score_history WHERE request_id = ? LIMIT 1", (request_id,)
+        ).fetchone()
+    if row is None or row["preview"] is None:
+        raise HTTPException(404, "Prévia indisponível")
+    return StreamingResponse(BytesIO(row["preview"]), media_type="image/jpeg")
 
 
 @app.post("/api/requests/{request_id}/invite/respond")
