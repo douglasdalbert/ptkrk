@@ -20,6 +20,10 @@ import qrcode
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
 from app.scoring import (
     block_duration_ms,
+    boost_duration_ms,
+    boost_fill_percent,
+    boost_loudness_percent,
+    boost_multiplier,
     max_score,
     microphone_rms_threshold,
     microphone_silence_ms,
@@ -171,6 +175,12 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         noise_setting = database.execute(
             "SELECT value FROM runtime_state WHERE key = 'microphone_rms_threshold'"
         ).fetchone()
+        boost_setting = database.execute(
+            "SELECT value FROM runtime_state WHERE key = 'boost_state'"
+        ).fetchone()
+        boost_state = json.loads(boost_setting["value"]) if boost_setting else None
+        boost_active = bool(invitation and boost_state and boost_state.get("active")
+                            and boost_state.get("request_id") == invitation["request_id"])
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
         scores = []
         if invitation:
@@ -198,7 +208,13 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "off_cue_penalty": off_cue_penalty(),
                 "off_cue_rearm_ms": off_cue_rearm_ms(),
                 "microphone_rms_threshold": float(noise_setting["value"]) if noise_setting else microphone_rms_threshold(),
-                "microphone_silence_ms": microphone_silence_ms()}
+                "microphone_silence_ms": microphone_silence_ms(),
+                "boost_fill_percent": boost_fill_percent(),
+                "boost_duration_ms": boost_duration_ms(),
+                "boost_multiplier": boost_multiplier(),
+                "boost_loudness_percent": boost_loudness_percent(),
+                "boost_active": boost_active,
+                "dev_tools": os.getenv("NODE_ENV", "production").strip().lower() != "production"}
     if include_caption_bars:
         snapshot["active_bars"] = active_bars
     return snapshot
@@ -382,16 +398,29 @@ async def requests_socket(websocket: WebSocket) -> None:
                 }
                 save_playback_sync(playback_sync)
                 continue
+            if is_tv and message.get("type") == "boost_state":
+                request_id = message.get("request_id")
+                active = message.get("active")
+                if (request_id is not None and not isinstance(request_id, str)) or not isinstance(active, bool):
+                    continue
+                with connection() as database:
+                    database.execute(
+                        "INSERT INTO runtime_state(key, value) VALUES ('boost_state', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (json.dumps({"request_id": request_id, "active": active}),),
+                    )
+                continue
             if is_tv and message.get("type") == "block_result":
                 request_id = message.get("request_id")
                 singer_id = message.get("singer_id")
                 event_id = message.get("event_id")
                 block_index = message.get("block_index")
                 hit = message.get("hit")
+                boosted = message.get("boosted", False)
                 if (not isinstance(request_id, str) or not isinstance(singer_id, str)
                         or not isinstance(event_id, str) or len(event_id) > 80
                         or not isinstance(block_index, int) or isinstance(block_index, bool) or block_index < 0
-                        or not isinstance(hit, bool)):
+                        or not isinstance(hit, bool) or not isinstance(boosted, bool)):
                     continue
                 with connection() as database:
                     invitation = invitation_state(database)
@@ -415,7 +444,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
                     database.execute("BEGIN IMMEDIATE")
                     update = record_block_result(
-                        database, request_id, singer_id, event_id, block_index, hit, caption_path
+                        database, request_id, singer_id, event_id, block_index, hit, caption_path, boosted
                     )
                 if update:
                     await websocket.send_json(update)
@@ -463,6 +492,35 @@ async def requests_socket(websocket: WebSocket) -> None:
                             subscribers.discard(subscriber)
                 continue
             if is_tv:
+                continue
+            if message.get("type") == "boost_request":
+                request_id = message.get("request_id")
+                event_id = message.get("event_id")
+                if (not isinstance(request_id, str) or not isinstance(event_id, str)
+                        or len(event_id) > 80):
+                    continue
+                with connection() as database:
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    owner = database.execute(
+                        "SELECT singer_id FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    if owner is None:
+                        continue
+                    singer_id = singer_socket_ids.get(websocket)
+                    eligible = owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = database.execute(
+                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
+                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1",
+                            (request_id, singer_id),
+                        ).fetchone() is not None
+                    if not eligible:
+                        continue
+                add_tv_notification(f"boost:{event_id}", request_id, {
+                    "type": "boost_request", "request_id": request_id, "singer_id": singer_id,
+                })
                 continue
             if message.get("type") == "microphone_activity":
                 request_id = message.get("request_id")

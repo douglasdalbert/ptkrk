@@ -10,6 +10,16 @@ const lyricTrack = document.querySelector("#track");
 const vocalMarker = document.querySelector("#vocal-marker");
 const lyricText = document.querySelector("#lyric-text");
 const liveScore = document.querySelector("#live-score");
+const boostBar = document.querySelector("#boost-bar");
+const boostLabel = document.querySelector("#boost-label");
+const boostBonuses = document.querySelector("#boost-bonuses");
+let boostFillPercent = 25;
+let boostDurationMs = 15000;
+let boostMultiplier = 1.5;
+let boostCharge = 0;
+let boostRemainingMs = 0;
+let boostFrameAt = null;
+let boostedBlocks = new Set();
 let socket;
 let retryTimer;
 let activeId = null;
@@ -65,8 +75,97 @@ async function command(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+function formatNumber(value, digits = 1) {
+  return value.toLocaleString("pt-BR", { maximumFractionDigits: digits });
+}
+
+function updateBoostBar() {
+  const active = boostRemainingMs > 0;
+  const level = active ? boostRemainingMs / boostDurationMs : boostCharge;
+  boostBar.style.setProperty("--boost", level.toFixed(4));
+  boostBar.dataset.state = active ? "active" : boostCharge >= 1 ? "full" : "charging";
+  boostBar.setAttribute("aria-valuenow", String(Math.round(level * 100)));
+  boostLabel.textContent = !activeId ? "" :
+    active ? `Energia ×${formatNumber(boostMultiplier)} · ${Math.ceil(boostRemainingMs / 1000)}s` :
+    boostCharge >= 1 ? "Barra cheia · cante mais alto!" : `Energia ${Math.floor(boostCharge * 100)}%`;
+}
+
+function resetBoost() {
+  boostCharge = 0;
+  boostRemainingMs = 0;
+  boostFrameAt = null;
+  boostedBlocks = new Set();
+  show.classList.remove("boost-active");
+  boostBar.classList.remove("just-filled");
+  boostBonuses.replaceChildren();
+  updateBoostBar();
+}
+
+function creditBoostHit(blockIndex) {
+  if (boostRemainingMs > 0) {
+    boostedBlocks.add(blockIndex);
+    return;
+  }
+  if (boostCharge >= 1 || !captionBars.length) return;
+  const needed = Math.max(1, Math.ceil(captionBars.length * boostFillPercent / 100));
+  boostCharge = Math.min(1, boostCharge + 1 / needed);
+  if (boostCharge >= 1) {
+    boostBar.classList.remove("just-filled");
+    void boostBar.offsetWidth;
+    boostBar.classList.add("just-filled");
+  }
+  updateBoostBar();
+}
+
+boostBar.addEventListener("animationend", event => {
+  if (event.animationName === "boost-filled") boostBar.classList.remove("just-filled");
+});
+
+function startBoost() {
+  if (!activeId || boostCharge < 1 || boostRemainingMs > 0) return;
+  boostRemainingMs = boostDurationMs;
+  boostFrameAt = video.paused ? null : performance.now();
+  show.classList.add("boost-active");
+  updateBoostBar();
+}
+
+function endBoost() {
+  boostRemainingMs = 0;
+  boostCharge = 0;
+  boostFrameAt = null;
+  show.classList.remove("boost-active");
+  updateBoostBar();
+}
+
+function tickBoost() {
+  if (boostRemainingMs <= 0) return;
+  const now = performance.now();
+  if (boostFrameAt !== null) {
+    boostRemainingMs -= now - boostFrameAt;
+    if (boostRemainingMs <= 0) {
+      endBoost();
+      return;
+    }
+    updateBoostBar();
+  }
+  boostFrameAt = video.paused || video.ended ? null : now;
+}
+
+function showBoostBonus(bonusPoints) {
+  const bonus = document.createElement("span");
+  bonus.className = "boost-bonus";
+  bonus.textContent = `×${formatNumber(boostMultiplier)} `;
+  const extra = document.createElement("b");
+  extra.textContent = `+${formatNumber(bonusPoints)}`;
+  bonus.append(extra);
+  bonus.addEventListener("animationend", () => bonus.remove(), { once: true });
+  boostBonuses.prepend(bonus);
+  while (boostBonuses.children.length > 4) boostBonuses.lastElementChild.remove();
+}
+
 function stopPlayback() {
   activeId = null;
+  resetBoost();
   cancelAnimationFrame(captionFrame);
   captionFrame = null;
   clearInterval(playbackSyncTimer);
@@ -94,6 +193,7 @@ function stopPlayback() {
 
 async function startPlayback(item) {
   activeId = item.id;
+  resetBoost();
   captionBars = [];
   hitBlocks = new Set();
   blockResults = new Map();
@@ -178,13 +278,7 @@ function renderCaptionBar() {
         activity.state_since_ms <= bar.start_ms + scoreToleranceMs);
       const hit = !!stateAtStart?.speaking || startedInWindow;
       blockResults.set(blockIndex, hit);
-      console.log("[app-tv] Bloco avaliado", {
-        request_id: activeId,
-        block_index: blockIndex,
-        start_ms: bar.start_ms,
-        microphone_state: hit ? "falando" : "mudo",
-        result: hit ? "certo" : "falhou",
-      });
+      if (hit) creditBoostHit(blockIndex);
     }
     if (blockResults.has(blockIndex) && !sentBlockResults.has(blockIndex) &&
         socket?.readyState === WebSocket.OPEN && activeSingerId) {
@@ -195,6 +289,7 @@ function renderCaptionBar() {
         singer_id: activeSingerId,
         block_index: blockIndex,
         hit: blockResults.get(blockIndex),
+        boosted: boostedBlocks.has(blockIndex),
       }));
       sentBlockResults.add(blockIndex);
     }
@@ -214,6 +309,7 @@ function renderCaptionBar() {
     block.dataset.result = hitBlocks.has(blockIndex) ? "hit" :
       blockResults.has(blockIndex) ? (blockResults.get(blockIndex) ? "hit" : "miss") :
     time >= bar.start_ms ? "waiting" : "approaching";
+    block.dataset.boosted = String(boostedBlocks.has(blockIndex));
     block.style.transform = `translate3d(${left}px, 0, 0)`;
   });
   for (const [index, block] of visibleBlocks) {
@@ -242,11 +338,6 @@ function showOffcuePenalty(positionMs) {
   penalty.style.setProperty("--lane", "0");
   penalty.addEventListener("animationend", () => penalty.remove(), { once: true });
   lyricText.append(penalty);
-  console.log("[app-tv] Penalidade off-cue", {
-    request_id: activeId,
-    position_ms: positionMs,
-    penalty: `-${offCuePenalty} ponto${offCuePenalty === 1 ? "" : "s"}`,
-  });
 }
 
 function evaluateOffCueSpeech(currentPositionMs) {
@@ -277,6 +368,7 @@ function evaluateOffCueSpeech(currentPositionMs) {
 
 function animateCaptionBars() {
   renderCaptionBar();
+  tickBoost();
   captionFrame = video.paused || video.ended ? null : requestAnimationFrame(animateCaptionBars);
 }
 
@@ -307,6 +399,9 @@ function render(snapshot) {
   scoreLaneCount = snapshot.score_lane_count ?? scoreLaneCount;
   offCuePenalty = snapshot.off_cue_penalty ?? offCuePenalty;
   offCueRearmMs = snapshot.off_cue_rearm_ms ?? offCueRearmMs;
+  boostFillPercent = snapshot.boost_fill_percent ?? boostFillPercent;
+  boostDurationMs = snapshot.boost_duration_ms ?? boostDurationMs;
+  boostMultiplier = snapshot.boost_multiplier ?? boostMultiplier;
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
   const next = current || items.slice(0, 4).find(item => item.status === "ready");
@@ -373,36 +468,22 @@ function connect() {
     if (message.type === "vocal_activity") {
       if (message.request_id === activeId) {
         microphoneStateEvents.push(message);
-        console.log(`[app-tv] Microfone: ${message.speaking ? "falando" : "mudo"}`, {
-          request_id: message.request_id,
-          singer_id: message.singer_id,
-          state_since_ms: message.state_since_ms,
-          received_position_ms: message.position_ms,
-          tv_position_ms: Math.round(video.currentTime * 1000),
-          clock_delta_ms: Number.isInteger(message.position_ms)
-            ? Math.round(video.currentTime * 1000) - message.position_ms
-            : null,
-          state_start_delta_ms: Number.isInteger(message.state_since_ms)
-            ? Math.round(video.currentTime * 1000) - message.state_since_ms
-            : null,
-        });
         if (message.speaking) animateVocalMarker();
         renderCaptionBar();
       }
       return;
     }
+    if (message.type === "boost_request") {
+      if (message.request_id === activeId) startBoost();
+      return;
+    }
     if (message.type === "score_update") {
       if (message.request_id !== activeId) return;
+      if (message.boosted && message.bonus_points > 0) showBoostBonus(message.bonus_points);
       if (message.result === "hit" && message.block_index != null) hitBlocks.add(message.block_index);
       if (message.block_index != null && ["hit", "miss"].includes(message.result)) {
         blockResults.set(message.block_index, message.result === "hit");
       }
-      console.log("[app-tv] Resultado vocal recebido", {
-        request_id: message.request_id,
-        singer: message.name,
-          block_index: message.block_index,
-        result: message.result,
-      });
       renderCaptionBar();
       liveScore.textContent = `${message.name}: ${message.points.toFixed(1)} / ${message.ranking_max}`;
       liveScore.hidden = false;
@@ -514,6 +595,8 @@ video.addEventListener("play", () => {
 video.addEventListener("pause", () => {
   cancelAnimationFrame(captionFrame);
   captionFrame = null;
+  tickBoost();
+  boostFrameAt = null;
   renderCaptionBar();
 });
 

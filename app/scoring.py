@@ -56,6 +56,26 @@ def microphone_silence_ms() -> int:
     return integer_setting("KARAOKE_SCORE_SILENCE_MS", 300, 0, 5000)
 
 
+def boost_fill_percent() -> int:
+    return integer_setting("KARAOKE_BOOST_FILL_PERCENT", 25, 1, 100)
+
+
+def boost_duration_ms() -> int:
+    return integer_setting("KARAOKE_BOOST_DURATION_MS", 15000, 1000, 300000)
+
+
+def boost_loudness_percent() -> int:
+    return integer_setting("KARAOKE_BOOST_LOUDNESS_PERCENT", 40, 5, 500)
+
+
+def boost_multiplier() -> float:
+    try:
+        value = float(os.getenv("KARAOKE_BOOST_MULTIPLIER", "1.5"))
+    except (TypeError, ValueError):
+        return 1.5
+    return max(1.0, min(5.0, value)) if math.isfinite(value) else 1.5
+
+
 def matching_block(bars: list[dict], position_ms: int) -> int | None:
     matches = [
         bar for bar in bars
@@ -73,6 +93,21 @@ def score_value(hits: int, penalties: int, total_blocks: int, ranking_max: int |
     ranking_max = max_score() if ranking_max is None else ranking_max
     adjusted = max(0, min(total_blocks, hits - penalties * off_cue_penalty()))
     return round(adjusted * ranking_max / total_blocks, 1)
+
+
+def _score_units(score: sqlite3.Row, total_blocks: int) -> int:
+    units = score["score_units"]
+    if units is None:
+        units = len(json.loads(score["hit_blocks"])) - score["penalties"] * off_cue_penalty()
+    return max(0, min(total_blocks, units))
+
+
+def _points_for_units(units: int, total_blocks: int, boosted_hits: int = 0) -> float:
+    if total_blocks <= 0:
+        return 0.0
+    # Boost bonus is extra credit on top of the regular ranking, so it may exceed max_score().
+    bonus = boosted_hits * (boost_multiplier() - 1)
+    return round((max(0, min(total_blocks, units)) + bonus) * max_score() / total_blocks, 1)
 
 
 def record_onset(
@@ -110,11 +145,12 @@ def record_onset(
         (request_id, singer_id),
     )
     score = database.execute(
-        "SELECT hit_blocks, penalties FROM song_scores WHERE request_id = ? AND singer_id = ?",
+        "SELECT hit_blocks, penalties, score_units FROM song_scores WHERE request_id = ? AND singer_id = ?",
         (request_id, singer_id),
     ).fetchone()
     hit_blocks = set(json.loads(score["hit_blocks"]))
     penalties = score["penalties"]
+    score_units = _score_units(score, total_blocks)
     if block_index is None:
         previous_penalty = database.execute(
             "SELECT 1 FROM score_events WHERE request_id = ? AND singer_id = ? "
@@ -125,12 +161,15 @@ def record_onset(
             event_type = "off_cue_repeat"
         else:
             penalties += 1
+            score_units = max(0, score_units - off_cue_penalty())
     else:
-        hit_blocks.add(block_index)
+        if block_index not in hit_blocks:
+            hit_blocks.add(block_index)
+            score_units = min(total_blocks, score_units + 1)
     database.execute(
-        "UPDATE song_scores SET hit_blocks = ?, penalties = ?, updated_at = CURRENT_TIMESTAMP "
+        "UPDATE song_scores SET hit_blocks = ?, penalties = ?, score_units = ?, updated_at = CURRENT_TIMESTAMP "
         "WHERE request_id = ? AND singer_id = ?",
-        (json.dumps(sorted(hit_blocks)), penalties, request_id, singer_id),
+        (json.dumps(sorted(hit_blocks)), penalties, score_units, request_id, singer_id),
     )
     points = score_value(len(hit_blocks), penalties, total_blocks)
     singer_name = database.execute("SELECT name FROM singers WHERE id = ?", (singer_id,)).fetchone()[0]
@@ -158,6 +197,7 @@ def record_block_result(
     block_index: int,
     hit: bool,
     caption_path: Path,
+    boosted: bool = False,
 ) -> dict | None:
     if not caption_path.is_file():
         return None
@@ -188,19 +228,29 @@ def record_block_result(
         (request_id, singer_id),
     )
     score = database.execute(
-        "SELECT hit_blocks, penalties FROM song_scores WHERE request_id = ? AND singer_id = ?",
+        "SELECT hit_blocks, boosted_blocks, penalties, score_units FROM song_scores "
+        "WHERE request_id = ? AND singer_id = ?",
         (request_id, singer_id),
     ).fetchone()
     hit_blocks = set(json.loads(score["hit_blocks"]))
+    boosted_blocks = set(json.loads(score["boosted_blocks"]))
+    score_units = _score_units(score, len(bars))
+    boosted_hit = False
     if hit:
-        hit_blocks.add(block_index)
+        if block_index not in hit_blocks:
+            hit_blocks.add(block_index)
+            score_units = min(len(bars), score_units + 1)
+            if boosted:
+                boosted_blocks.add(block_index)
+                boosted_hit = True
     database.execute(
-        "UPDATE song_scores SET hit_blocks = ?, updated_at = CURRENT_TIMESTAMP "
-        "WHERE request_id = ? AND singer_id = ?",
-        (json.dumps(sorted(hit_blocks)), request_id, singer_id),
+        "UPDATE song_scores SET hit_blocks = ?, boosted_blocks = ?, score_units = ?, "
+        "updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND singer_id = ?",
+        (json.dumps(sorted(hit_blocks)), json.dumps(sorted(boosted_blocks)), score_units, request_id, singer_id),
     )
     total_blocks = len(bars)
-    points = score_value(len(hit_blocks), score["penalties"], total_blocks)
+    points = _points_for_units(score_units, total_blocks, len(boosted_blocks))
+    bonus_points = round(max_score() * (boost_multiplier() - 1) / total_blocks, 1) if boosted_hit else 0.0
     singer_name = database.execute("SELECT name FROM singers WHERE id = ?", (singer_id,)).fetchone()[0]
     return {
         "type": "score_update",
@@ -210,6 +260,9 @@ def record_block_result(
         "block_index": block_index,
         "result": event_type,
         "hits": len(hit_blocks),
+        "boosted": boosted_hit,
+        "boosted_hits": len(boosted_blocks),
+        "bonus_points": bonus_points,
         "penalties": score["penalties"],
         "total_blocks": total_blocks,
         "points": points,
@@ -254,16 +307,20 @@ def record_offcue_penalty(
         (request_id, singer_id),
     )
     score = database.execute(
-        "SELECT hit_blocks, penalties FROM song_scores WHERE request_id = ? AND singer_id = ?",
+        "SELECT hit_blocks, boosted_blocks, penalties, score_units FROM song_scores "
+        "WHERE request_id = ? AND singer_id = ?",
         (request_id, singer_id),
     ).fetchone()
     penalties = score["penalties"] + (0 if previous_penalty else 1)
+    score_units = _score_units(score, total_blocks)
+    if not previous_penalty:
+        score_units = max(0, score_units - off_cue_penalty())
     database.execute(
-        "UPDATE song_scores SET penalties = ?, updated_at = CURRENT_TIMESTAMP "
+        "UPDATE song_scores SET penalties = ?, score_units = ?, updated_at = CURRENT_TIMESTAMP "
         "WHERE request_id = ? AND singer_id = ?",
-        (penalties, request_id, singer_id),
+        (penalties, score_units, request_id, singer_id),
     )
-    points = score_value(len(json.loads(score["hit_blocks"])), penalties, total_blocks)
+    points = _points_for_units(score_units, total_blocks, len(json.loads(score["boosted_blocks"])))
     singer_name = database.execute("SELECT name FROM singers WHERE id = ?", (singer_id,)).fetchone()[0]
     return {
         "type": "score_update",
@@ -290,7 +347,8 @@ def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: 
     except (OSError, json.JSONDecodeError):
         return []
     rows = database.execute(
-        "SELECT song_scores.singer_id, singers.name, song_scores.hit_blocks, song_scores.penalties "
+        "SELECT song_scores.singer_id, singers.name, song_scores.hit_blocks, song_scores.boosted_blocks, "
+        "song_scores.penalties, song_scores.score_units "
         "FROM song_scores JOIN singers ON singers.id = song_scores.singer_id "
         "WHERE song_scores.request_id = ? ORDER BY singers.name",
         (request_id,),
@@ -298,7 +356,8 @@ def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: 
     scores = []
     for row in rows:
         hits = len(json.loads(row["hit_blocks"]))
-        points = score_value(hits, row["penalties"], total_blocks)
+        points = _points_for_units(_score_units(row, total_blocks), total_blocks,
+                                   len(json.loads(row["boosted_blocks"])))
         scores.append({
             "singer_id": row["singer_id"],
             "name": row["name"],

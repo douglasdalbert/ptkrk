@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.captions import parse_vtt_caption_bars
-from app.scoring import block_duration_ms, matching_block, max_score, microphone_rms_threshold, microphone_silence_ms, onset_tolerance_ms, record_offcue_penalty, record_onset, score_lane_count, score_snapshot, score_value
+from app.scoring import block_duration_ms, boost_duration_ms, boost_fill_percent, boost_multiplier, matching_block, max_score, microphone_rms_threshold, microphone_silence_ms, onset_tolerance_ms, record_block_result, record_offcue_penalty, record_onset, score_lane_count, score_snapshot, score_value
 from app.storage import connection, initialize
 
 
@@ -142,6 +142,77 @@ This is a phrase
                     self.assertEqual(repeated["penalties"], 1)
                     self.assertEqual(before_rearm["penalties"], 1)
                     self.assertEqual(after_rearm["penalties"], 2)
+
+    def test_offcue_penalties_never_create_a_negative_score_balance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "karaoke.sqlite3"
+            with patch("app.storage.DATABASE_PATH", database_path), patch.dict(
+                "os.environ", {"KARAOKE_SCORE_OFF_CUE_PENALTY": "1", "KARAOKE_SCORE_OFF_CUE_REARM_MS": "500"}
+            ):
+                initialize()
+                with connection() as database:
+                    database.execute(
+                        "INSERT INTO singers(id,name,session_hash) VALUES ('singer','Cantor','hash')"
+                    )
+                    database.execute(
+                        "INSERT INTO requests(id,singer_id,video_id,status) "
+                        "VALUES ('song','singer','abcdefghijk','ready')"
+                    )
+                    sidecar = Path(directory) / "captions.json"
+                    sidecar.write_text(json.dumps({"duration_ms": 10000, "bars": [
+                        {"block_index": 0, "start_ms": 1000, "end_ms": 2000,
+                         "score_window_start_ms": 900, "score_window_end_ms": 1100},
+                        {"block_index": 1, "start_ms": 5000, "end_ms": 6000,
+                         "score_window_start_ms": 4900, "score_window_end_ms": 5100},
+                    ]}), encoding="utf-8")
+
+                    record_offcue_penalty(database, "song", "singer", "off-1", 3000, sidecar)
+                    record_offcue_penalty(database, "song", "singer", "off-2", 4000, sidecar)
+                    first_hit = record_onset(database, "song", "singer", "hit-1", 1000, sidecar)
+                    self.assertEqual(first_hit["points"], 500.0)
+
+                    after_hit_penalty = record_offcue_penalty(
+                        database, "song", "singer", "off-3", 7000, sidecar
+                    )
+                    self.assertEqual(after_hit_penalty["points"], 0.0)
+                    second_hit = record_onset(database, "song", "singer", "hit-2", 5000, sidecar)
+                    self.assertEqual(second_hit["points"], 500.0)
+                    self.assertGreaterEqual(
+                        database.execute(
+                            "SELECT score_units FROM song_scores WHERE request_id = 'song'"
+                        ).fetchone()[0],
+                        0,
+                    )
+
+    def test_boosted_hits_add_configured_multiplier_bonus_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "karaoke.sqlite3"
+            with patch("app.storage.DATABASE_PATH", database_path), patch.dict(
+                "os.environ", {"KARAOKE_BOOST_MULTIPLIER": "1.5", "KARAOKE_SCORE_MAX": "1000"}
+            ):
+                self.assertEqual((boost_fill_percent(), boost_duration_ms(), boost_multiplier()), (25, 15000, 1.5))
+                initialize()
+                with connection() as database:
+                    database.execute("INSERT INTO singers(id,name,session_hash) VALUES ('singer','Cantor','hash')")
+                    database.execute(
+                        "INSERT INTO requests(id,singer_id,video_id,status) VALUES ('song','singer','abcdefghijk','ready')"
+                    )
+                    sidecar = Path(directory) / "captions.json"
+                    sidecar.write_text(json.dumps({"duration_ms": 10000, "bars": [
+                        {"block_index": index, "start_ms": index * 1000, "end_ms": index * 1000 + 900}
+                        for index in range(4)
+                    ]}), encoding="utf-8")
+
+                    normal = record_block_result(database, "song", "singer", "e1", 0, True, sidecar)
+                    boosted = record_block_result(database, "song", "singer", "e2", 1, True, sidecar, True)
+                    repeated = record_block_result(database, "song", "singer", "e3", 1, True, sidecar, True)
+                    missed = record_block_result(database, "song", "singer", "e4", 2, False, sidecar, True)
+
+                    self.assertEqual((normal["points"], normal["boosted"]), (250.0, False))
+                    self.assertEqual((boosted["points"], boosted["boosted"], boosted["bonus_points"]), (625.0, True, 125.0))
+                    self.assertIsNone(repeated)
+                    self.assertEqual((missed["points"], missed["boosted"]), (625.0, False))
+                    self.assertEqual(score_snapshot(database, "song", sidecar)[0]["points"], 625.0)
 
 
 if __name__ == "__main__":

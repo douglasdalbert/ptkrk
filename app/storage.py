@@ -147,7 +147,9 @@ def initialize() -> None:
                 request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
                 singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
                 hit_blocks TEXT NOT NULL DEFAULT '[]',
+                boosted_blocks TEXT NOT NULL DEFAULT '[]',
                 penalties INTEGER NOT NULL DEFAULT 0,
+                score_units INTEGER NOT NULL DEFAULT 0 CHECK (score_units >= 0),
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (request_id, singer_id)
             );
@@ -215,6 +217,10 @@ def initialize() -> None:
             database.execute("ALTER TABLE backvocals ADD COLUMN score_eligible INTEGER NOT NULL DEFAULT 1")
         if "offcue_window" not in {row[1] for row in database.execute("PRAGMA table_info(score_events)")}:
             database.execute("ALTER TABLE score_events ADD COLUMN offcue_window INTEGER")
+        if "score_units" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
+            database.execute("ALTER TABLE song_scores ADD COLUMN score_units INTEGER")
+        if "boosted_blocks" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
+            database.execute("ALTER TABLE song_scores ADD COLUMN boosted_blocks TEXT NOT NULL DEFAULT '[]'")
         database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         for category in ("videos", "previews"):

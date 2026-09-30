@@ -26,8 +26,13 @@
           </div>
         </div>
         <span id="connect-status" class="connect-status" role="status" data-state="connecting" title="Conectando" tabindex="0"><span class="sr-only">Conectando</span></span>
+        <div id="boost-bonuses" class="boost-bonuses" aria-hidden="true"></div>
         <div id="skip-notice" class="skip-notice" hidden>Pulando música <span id="skip-clock"></span></div>
         <div id="error" class="error" role="alert"></div>
+      </div>
+      <div id="boost-bar" class="boost-bar" role="progressbar" aria-label="Barra de energia" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-state="charging">
+        <span class="boost-fill"></span>
+        <span id="boost-label" class="boost-label"></span>
       </div>
       <footer class="tv-footer">
         <section class="queue" aria-labelledby="queue-title">

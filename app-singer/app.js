@@ -19,11 +19,13 @@ const confirmDialog = new ConfirmDialog();
 const skippingView = document.querySelector("#skipping");
 const singingOverlay = document.querySelector("#singing-overlay");
 const microphoneButton = document.querySelector("#microphone-button");
+const boostTestButton = document.querySelector("#boost-test-button");
 const microphoneWaveform = document.querySelector("#microphone-waveform");
 const microphonePermissionButton = document.querySelector("#microphone-permission-button");
 const microphonePermissionStatus = document.querySelector("#microphone-permission-status");
 const scoreStatus = document.querySelector("#score-status");
 const actionFooter = document.querySelector("#action-footer");
+let microphonePermissionStatusTimer = null;
 const skipAction = document.querySelector("#skip-action");
 const skipButton = document.querySelector("#skip-button");
 let singer = null;
@@ -58,6 +60,23 @@ let scoredRequestId = null;
 let offCueRearmMs = 500;
 let microphoneRmsThreshold = 0.04;
 let microphoneSilenceMs = 300;
+let boostLoudnessPercent = 40;
+let loudnessRequestId = null;
+let loudnessSum = 0;
+let loudnessCount = 0;
+let shortLoudness = 0;
+let surgeFrames = 0;
+let windowSum = 0;
+let windowFrames = 0;
+let windowStartedAt = 0;
+let lastVoicedAt = 0;
+let lastBoostRequestAt = -Infinity;
+let boostActive = false;
+// 250 ms windows of singing needed before the song average is trusted, and ~200 ms of sustained surge.
+const loudnessWindowMs = 250;
+const loudnessBaselineWindows = 20;
+const loudnessSurgeFrames = 12;
+const boostRequestCooldownMs = 3000;
 
 function stopMicrophone() {
   if (microphoneFrame !== null) cancelAnimationFrame(microphoneFrame);
@@ -271,6 +290,9 @@ function connect() {
       offCueRearmMs = message.off_cue_rearm_ms || 500;
       microphoneRmsThreshold = message.microphone_rms_threshold || 0.04;
       microphoneSilenceMs = message.microphone_silence_ms ?? 300;
+      boostLoudnessPercent = message.boost_loudness_percent ?? boostLoudnessPercent;
+      boostActive = !!message.boost_active;
+      boostTestButton.hidden = !message.dev_tools;
       if (message.invitation?.request_id !== scoredRequestId) {
         scoredRequestId = message.invitation?.request_id || null;
       }
@@ -599,6 +621,57 @@ function setMicrophoneSpeaking(speaking, requestId, positionMs) {
   sendMicrophoneActivity(speaking, requestId, positionMs);
 }
 
+function trackLoudness(rms, requestId) {
+  if (!requestId) return;
+  if (loudnessRequestId !== requestId) {
+    loudnessRequestId = requestId;
+    loudnessSum = 0;
+    loudnessCount = 0;
+    shortLoudness = 0;
+    surgeFrames = 0;
+    windowFrames = 0;
+  }
+  const now = performance.now();
+  shortLoudness = shortLoudness ? shortLoudness * 0.8 + rms * 0.2 : rms;
+  const baselineReady = loudnessCount >= loudnessBaselineWindows;
+  const average = baselineReady ? loudnessSum / loudnessCount : 0;
+  const limit = average * (1 + boostLoudnessPercent / 100);
+  if (windowFrames && now - lastVoicedAt > loudnessWindowMs) windowFrames = 0;
+  if (!windowFrames) {
+    windowSum = 0;
+    windowStartedAt = now;
+  }
+  windowSum += rms;
+  windowFrames += 1;
+  lastVoicedAt = now;
+  if (now - windowStartedAt >= loudnessWindowMs) {
+    const sample = windowSum / windowFrames;
+    windowFrames = 0;
+    // Loud windows count only up to the limit, so the average can recover from a noisy start without jumping.
+    if (!boostActive) {
+      loudnessSum += baselineReady ? Math.min(sample, limit) : sample;
+      loudnessCount += 1;
+    }
+  }
+  if (boostActive || !baselineReady || shortLoudness <= limit) {
+    surgeFrames = 0;
+    return;
+  }
+  surgeFrames += 1;
+  if (surgeFrames < loudnessSurgeFrames || now - lastBoostRequestAt < boostRequestCooldownMs ||
+      socket?.readyState !== WebSocket.OPEN) return;
+  lastBoostRequestAt = now;
+  sendBoostRequest(requestId);
+  scoreStatus.textContent = "Que energia! Se a barra estiver cheia, o evento começa na TV.";
+}
+
+function sendBoostRequest(requestId) {
+  if (!requestId || socket?.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: "boost_request", request_id: requestId, event_id: crypto.randomUUID() }));
+}
+
+boostTestButton.addEventListener("click", () => sendBoostRequest(currentInvitation?.request_id));
+
 function sampleMicrophone() {
   if (!microphoneAnalyser || !microphoneStream) return;
   const samples = new Float32Array(microphoneAnalyser.fftSize);
@@ -617,6 +690,7 @@ function sampleMicrophone() {
       sendMicrophoneActivity(true, requestId, position);
       microphoneStatePositioned = true;
     }
+    if (microphoneSpeaking && position !== null) trackLoudness(rms, requestId);
     if (loudFrameCount >= 2 && requestId && position === null) {
       scoreStatus.textContent = "Aguardando sincronismo da TV.";
     }
@@ -688,6 +762,10 @@ microphonePermissionButton.addEventListener("click", async () => {
     microphonePermissionStatus.dataset.state = "granted";
     microphonePermissionStatus.textContent = "Permissão concedida. O microfone só será usado para pontuar quando for sua vez.";
     microphonePermissionStatus.hidden = false;
+    clearTimeout(microphonePermissionStatusTimer);
+    microphonePermissionStatusTimer = setTimeout(() => {
+      microphonePermissionStatus.hidden = true;
+    }, 10000);
   } catch {
     microphonePermissionStatus.dataset.state = "error";
     microphonePermissionStatus.textContent = "Não foi possível acessar o microfone. Verifique a permissão e o HTTPS.";
