@@ -76,8 +76,12 @@ def star_high_percent() -> int:
     return integer_setting("KARAOKE_STAR_HIGH_PERCENT", 75, 0, 100)
 
 
-def star_nice_percent() -> int:
-    return integer_setting("KARAOKE_STAR_NICE_PERCENT", 91, 0, 100)
+def star_nice_percent() -> float:
+    try:
+        value = float(os.getenv("KARAOKE_STAR_NICE_PERCENT", "91"))
+    except (TypeError, ValueError):
+        return 91.0
+    return max(0.0, min(100.0, value)) if math.isfinite(value) else 91.0
 
 
 def star_close_ms() -> int:

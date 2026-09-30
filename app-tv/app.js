@@ -808,18 +808,31 @@ function openScorePanel({ percent, points, videoSrc = "", onClose = null }) {
 
   function celebrate() {
     let musicSeconds = perfect ? 15 : 5;
-    const streamerMultiplier = finalPercent >= 100 ? 3 : 1;
+    const pureHundred = finalPercent === 100;
+    const finalHalf = finalPercent > (100 + starNicePercent) / 2;
+    const streamerMultiplier = pureHundred ? 3 : finalHalf ? 2 : 1;
+    const showParticles = perfect || finalHalf;
     if (current.output) {
       playCrash(current.output, current.output.context.currentTime + 0.02);
       musicSeconds = perfect ? playPerfectSong(current.output) : playFanfare(current.output);
     }
-    if (perfect) {
-      scorePanel.classList.add("perfect");
+    if (perfect) scorePanel.classList.add("perfect");
+    if (showParticles) {
       launchStreamers(70 * streamerMultiplier);
-      if (finalPercent >= 100) launchCelebrationStars(18);
+      if (finalHalf) launchCelebrationStars(pureHundred ? 18 : Math.round(18 * 0.1));
+      let starRemainder = 0;
       const confetti = setInterval(() => {
         launchStreamers(5 * streamerMultiplier);
-        if (finalPercent >= 100) launchCelebrationStars(3);
+        if (finalHalf) {
+          if (pureHundred) {
+            launchCelebrationStars(3);
+          } else {
+            starRemainder += 3 * 0.1;
+            const starCount = Math.floor(starRemainder);
+            starRemainder -= starCount;
+            if (starCount > 0) launchCelebrationStars(starCount);
+          }
+        }
       }, 280);
       current.intervals.push(confetti);
       later(() => clearInterval(confetti), musicSeconds * 1000);
