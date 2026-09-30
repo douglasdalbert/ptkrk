@@ -18,10 +18,29 @@ from pydantic import BaseModel, Field
 import qrcode
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
-from app.scoring import max_score, microphone_rms_threshold, off_cue_rearm_ms, record_onset, score_snapshot
+from app.scoring import (
+    max_score,
+    microphone_rms_threshold,
+    off_cue_rearm_ms,
+    onset_tolerance_ms,
+    record_block_result,
+    record_onset,
+    score_snapshot,
+)
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
-from app.storage import connection, initialize
+from app.storage import (
+    add_vocal_activity,
+    add_tv_notification,
+    connection,
+    initialize,
+    latest_vocal_activity_id,
+    latest_tv_notification_id,
+    load_playback_sync,
+    save_playback_sync,
+    tv_notifications_since,
+    vocal_activity_since,
+)
 
 
 @asynccontextmanager
@@ -161,6 +180,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
     snapshot = {"type": "requests", "items": request_snapshot(), "invitation": invitation,
                 "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
                 "scores": scores, "ranking_max": max_score(),
+                "score_tolerance_ms": onset_tolerance_ms(),
                 "off_cue_rearm_ms": off_cue_rearm_ms(),
                 "microphone_rms_threshold": microphone_rms_threshold()}
     if include_caption_bars:
@@ -217,8 +237,51 @@ def skip_enabled() -> bool:
 
 async def watch_requests() -> None:
     previous = party_snapshot()
+    last_activity_id = latest_vocal_activity_id()
+    last_notification_id = latest_tv_notification_id()
+    last_sync_time_ms = 0
+    next_snapshot_check = time.monotonic()
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.05)
+        sync = load_playback_sync()
+        if sync and sync["server_time_ms"] != last_sync_time_ms:
+            last_sync_time_ms = sync["server_time_ms"]
+            for subscriber in tuple(subscribers - tv_subscribers):
+                try:
+                    await subscriber.send_json(sync)
+                except (WebSocketDisconnect, RuntimeError, OSError):
+                    subscribers.discard(subscriber)
+                    singer_subscribers.pop(subscriber, None)
+                    singer_socket_ids.pop(subscriber, None)
+        if tv_subscribers:
+            for activity in vocal_activity_since(last_activity_id):
+                last_activity_id = activity["id"]
+                message = {
+                    "type": "vocal_activity",
+                    "request_id": activity["request_id"],
+                    "singer_id": activity["singer_id"],
+                    "speaking": bool(activity["speaking"]),
+                    "position_ms": activity["position_ms"],
+                    "state_since_ms": activity["state_since_ms"],
+                }
+                for subscriber in tuple(tv_subscribers):
+                    try:
+                        await subscriber.send_json(message)
+                    except (WebSocketDisconnect, RuntimeError, OSError):
+                        subscribers.discard(subscriber)
+                        tv_subscribers.discard(subscriber)
+            for notification in tv_notifications_since(last_notification_id):
+                last_notification_id = notification["id"]
+                message = json.loads(notification["payload"])
+                for subscriber in tuple(tv_subscribers):
+                    try:
+                        await subscriber.send_json(message)
+                    except (WebSocketDisconnect, RuntimeError, OSError):
+                        subscribers.discard(subscriber)
+                        tv_subscribers.discard(subscriber)
+        if time.monotonic() < next_snapshot_check:
+            continue
+        next_snapshot_check = time.monotonic() + 1
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             apply_skip(database, time.time())
@@ -274,8 +337,9 @@ async def requests_socket(websocket: WebSocket) -> None:
                 singer_subscribers[websocket] = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
                 singer_socket_ids[websocket] = singer_id
         await websocket.send_json(party_snapshot(include_caption_bars=is_tv))
-        if not is_tv and playback_sync and time.time() - playback_sync["server_time"] < 1:
-            await websocket.send_json({**playback_sync, "type": "playback_sync"})
+        sync = load_playback_sync() if not is_tv else None
+        if sync and time.time() - sync["server_time"] < 1:
+            await websocket.send_json({**sync, "type": "playback_sync"})
         subscribers.add(websocket)
         while True:
             message = await websocket.receive_json()
@@ -290,6 +354,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     invitation = invitation_state(database)
                 if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                     playback_sync = None
+                    save_playback_sync(None)
                     continue
                 playback_sync = {
                     "type": "playback_sync",
@@ -299,26 +364,100 @@ async def requests_socket(websocket: WebSocket) -> None:
                     "server_time": time.time(),
                     "server_time_ms": round(time.time() * 1000),
                 }
-                for subscriber in tuple(subscribers):
-                    if subscriber in tv_subscribers:
+                save_playback_sync(playback_sync)
+                continue
+            if is_tv and message.get("type") == "block_result":
+                request_id = message.get("request_id")
+                singer_id = message.get("singer_id")
+                event_id = message.get("event_id")
+                block_index = message.get("block_index")
+                hit = message.get("hit")
+                if (not isinstance(request_id, str) or not isinstance(singer_id, str)
+                        or not isinstance(event_id, str) or len(event_id) > 80
+                        or not isinstance(block_index, int) or isinstance(block_index, bool) or block_index < 0
+                        or not isinstance(hit, bool)):
+                    continue
+                with connection() as database:
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
-                    try:
-                        await subscriber.send_json(playback_sync)
-                    except (WebSocketDisconnect, RuntimeError, OSError):
-                        subscribers.discard(subscriber)
+                    owner = database.execute(
+                        "SELECT singer_id, video_id FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    if owner is None:
+                        continue
+                    eligible = owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = database.execute(
+                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
+                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1",
+                            (request_id, singer_id),
+                        ).fetchone() is not None
+                    if not eligible:
+                        continue
+                    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+                    caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
+                    database.execute("BEGIN IMMEDIATE")
+                    update = record_block_result(
+                        database, request_id, singer_id, event_id, block_index, hit, caption_path
+                    )
+                if update:
+                    await websocket.send_json(update)
                 continue
             if is_tv:
+                continue
+            if message.get("type") == "microphone_activity":
+                request_id = message.get("request_id")
+                speaking = message.get("speaking")
+                event_id = message.get("event_id")
+                position_ms = message.get("position_ms")
+                state_since_ms = message.get("state_since_ms", position_ms)
+                if (not isinstance(request_id, str) or not isinstance(speaking, bool)
+                        or not isinstance(event_id, str) or len(event_id) > 80
+                        or (position_ms is not None and
+                            (not isinstance(position_ms, int) or isinstance(position_ms, bool)
+                             or not 0 <= position_ms <= 12 * 60 * 1000))
+                        or (state_since_ms is not None and
+                            (not isinstance(state_since_ms, int) or isinstance(state_since_ms, bool)
+                             or not 0 <= state_since_ms <= 12 * 60 * 1000))):
+                    continue
+                with connection() as database:
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    owner = database.execute(
+                        "SELECT singer_id FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    if owner is None:
+                        continue
+                    singer_id = singer_socket_ids.get(websocket)
+                    eligible = owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = database.execute(
+                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
+                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1",
+                            (request_id, singer_id),
+                        ).fetchone() is not None
+                    if not eligible:
+                        continue
+                add_vocal_activity(
+                    event_id, request_id, singer_id, speaking, position_ms, state_since_ms, time.time()
+                )
                 continue
             if message.get("type") == "vocal_onset":
                 request_id = message.get("request_id")
                 position_ms = message.get("position_ms")
                 event_id = message.get("event_id")
+                reported_block_index = message.get("block_index")
                 if (not isinstance(request_id, str) or not isinstance(position_ms, int)
-                        or not isinstance(event_id, str) or len(event_id) > 80):
+                    or not isinstance(event_id, str) or len(event_id) > 80
+                    or (reported_block_index is not None and
+                        (not isinstance(reported_block_index, int) or isinstance(reported_block_index, bool)
+                         or reported_block_index < 0))):
                     continue
                 if not 0 <= position_ms <= 12 * 60 * 1000:
                     continue
-                sync = playback_sync
+                sync = load_playback_sync()
                 if not sync or sync["request_id"] != request_id or time.time() - sync["server_time"] > 0.75:
                     continue
                 expected_position = sync["position_ms"] + (
@@ -351,19 +490,13 @@ async def requests_socket(websocket: WebSocket) -> None:
                     update = record_onset(
                         database, request_id, singer_id, event_id, position_ms, caption_path
                     )
-                activity = {
-                    "type": "vocal_activity",
-                    "request_id": request_id,
-                    "singer_id": singer_id,
-                }
-                for tv_subscriber in tuple(tv_subscribers):
-                    try:
-                        await tv_subscriber.send_json(activity)
-                    except (WebSocketDisconnect, RuntimeError, OSError):
-                        subscribers.discard(tv_subscriber)
-                        tv_subscribers.discard(tv_subscriber)
                 if update:
+                    update["reported_block_index"] = reported_block_index
+                    update["client_match_verified"] = update["block_index"] == reported_block_index
+                    add_tv_notification(f"score:{event_id}", request_id, update)
                     for subscriber in tuple(subscribers):
+                        if subscriber in tv_subscribers:
+                            continue
                         try:
                             await subscriber.send_json(update)
                         except (WebSocketDisconnect, RuntimeError, OSError):
@@ -419,14 +552,17 @@ def tv_state() -> dict:
 
 @app.post("/api/tv/reset", dependencies=[Depends(tv_command)])
 def tv_reset() -> dict[str, str]:
+    global playback_sync
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
         previous = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         generation = str(uuid4())
         database.execute("UPDATE party SET generation=? WHERE id=1", (generation,))
         for table in ("skip_request", "invitation", "missed_invitations", "group_rooms", "ready_queue",
-                      "accepted_counts", "requests", "singers"):
+                      "accepted_counts", "requests", "singers", "vocal_activity", "tv_notifications",
+                      "runtime_state"):
             database.execute(f"DELETE FROM {table}")
+    playback_sync = None
     shutil.rmtree(MEDIA_ROOT / previous, ignore_errors=True)
     for directory in (MEDIA_ROOT / "videos", MEDIA_ROOT / "previews"):
         shutil.rmtree(directory, ignore_errors=True)

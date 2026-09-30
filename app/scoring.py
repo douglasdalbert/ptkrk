@@ -142,6 +142,74 @@ def record_onset(
     }
 
 
+def record_block_result(
+    database: sqlite3.Connection,
+    request_id: str,
+    singer_id: str,
+    event_id: str,
+    block_index: int,
+    hit: bool,
+    caption_path: Path,
+) -> dict | None:
+    if not caption_path.is_file():
+        return None
+    try:
+        bars = json.loads(caption_path.read_text(encoding="utf-8")).get("bars", [])
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not any(int(bar.get("block_index", index)) == block_index for index, bar in enumerate(bars)):
+        return None
+    already_scored = database.execute(
+        "SELECT 1 FROM score_events WHERE request_id = ? AND singer_id = ? AND block_index = ? "
+        "AND event_type IN ('hit', 'miss') LIMIT 1",
+        (request_id, singer_id, block_index),
+    ).fetchone()
+    if already_scored:
+        return None
+
+    event_type = "hit" if hit else "miss"
+    inserted = database.execute(
+        "INSERT OR IGNORE INTO score_events(event_id, request_id, singer_id, event_type, block_index) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (event_id, request_id, singer_id, event_type, block_index),
+    )
+    if not inserted.rowcount:
+        return None
+    database.execute(
+        "INSERT OR IGNORE INTO song_scores(request_id, singer_id) VALUES (?, ?)",
+        (request_id, singer_id),
+    )
+    score = database.execute(
+        "SELECT hit_blocks, penalties FROM song_scores WHERE request_id = ? AND singer_id = ?",
+        (request_id, singer_id),
+    ).fetchone()
+    hit_blocks = set(json.loads(score["hit_blocks"]))
+    if hit:
+        hit_blocks.add(block_index)
+    database.execute(
+        "UPDATE song_scores SET hit_blocks = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE request_id = ? AND singer_id = ?",
+        (json.dumps(sorted(hit_blocks)), request_id, singer_id),
+    )
+    total_blocks = len(bars)
+    points = score_value(len(hit_blocks), score["penalties"], total_blocks)
+    singer_name = database.execute("SELECT name FROM singers WHERE id = ?", (singer_id,)).fetchone()[0]
+    return {
+        "type": "score_update",
+        "request_id": request_id,
+        "singer_id": singer_id,
+        "name": singer_name,
+        "block_index": block_index,
+        "result": event_type,
+        "hits": len(hit_blocks),
+        "penalties": score["penalties"],
+        "total_blocks": total_blocks,
+        "points": points,
+        "percent": round(points * 100 / max_score(), 1),
+        "ranking_max": max_score(),
+    }
+
+
 def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: Path | None) -> list[dict]:
     if caption_path is None or not caption_path.is_file():
         return []

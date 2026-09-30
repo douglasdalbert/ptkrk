@@ -43,16 +43,17 @@ let groupPollTimer = null;
 let pendingGroupPrompt = null;
 let failureAlertActive = false;
 let playbackClock = null;
-let activeBars = [];
 let microphoneStream = null;
 let microphoneContext = null;
 let microphoneAnalyser = null;
 let microphoneFrame = null;
 let loudFrameCount = 0;
+let silenceStartedAt = null;
+let silenceStartedPosition = null;
+let microphoneSpeaking = false;
+let microphoneStatePositioned = false;
 let currentScores = [];
 let currentRankingMax = 1000;
-let scoredBlocks = new Set();
-let scoredOffCueWindows = new Set();
 let scoredRequestId = null;
 let offCueRearmMs = 500;
 let microphoneRmsThreshold = 0.04;
@@ -60,6 +61,9 @@ let microphoneRmsThreshold = 0.04;
 function stopMicrophone() {
   if (microphoneFrame !== null) cancelAnimationFrame(microphoneFrame);
   microphoneFrame = null;
+  setMicrophoneSpeaking(false, currentInvitation?.request_id, estimatePlaybackPosition());
+  silenceStartedAt = null;
+  silenceStartedPosition = null;
   microphoneStream?.getTracks().forEach(track => track.stop());
   microphoneStream = null;
   microphoneAnalyser = null;
@@ -121,8 +125,6 @@ function clearSession() {
   currentSkip = null;
   currentSong = null;
   playbackClock = null;
-  activeBars = [];
-  scoredBlocks.clear();
   currentScores = [];
   currentRankingMax = 1000;
   scoredRequestId = null;
@@ -267,11 +269,8 @@ function connect() {
       currentRankingMax = message.ranking_max || 1000;
       offCueRearmMs = message.off_cue_rearm_ms || 500;
       microphoneRmsThreshold = message.microphone_rms_threshold || 0.04;
-      activeBars = message.active_bars || [];
       if (message.invitation?.request_id !== scoredRequestId) {
         scoredRequestId = message.invitation?.request_id || null;
-        scoredBlocks.clear();
-        scoredOffCueWindows.clear();
       }
       renderScores();
       renderSkip(message);
@@ -579,6 +578,25 @@ function drawMicrophoneWaveform(samples = null) {
   context.stroke();
 }
 
+function sendMicrophoneActivity(speaking, requestId, stateSinceMs) {
+  if (!requestId || socket?.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({
+    type: "microphone_activity",
+    request_id: requestId,
+    event_id: crypto.randomUUID(),
+    speaking,
+    position_ms: estimatePlaybackPosition(),
+    state_since_ms: stateSinceMs,
+  }));
+}
+
+function setMicrophoneSpeaking(speaking, requestId, positionMs) {
+  if (microphoneSpeaking === speaking) return;
+  microphoneSpeaking = speaking;
+  microphoneStatePositioned = Number.isInteger(positionMs);
+  sendMicrophoneActivity(speaking, requestId, positionMs);
+}
+
 function sampleMicrophone() {
   if (!microphoneAnalyser || !microphoneStream) return;
   const samples = new Float32Array(microphoneAnalyser.fftSize);
@@ -590,36 +608,29 @@ function sampleMicrophone() {
   const requestId = currentInvitation?.request_id;
   const position = estimatePlaybackPosition();
   if (rms >= microphoneRmsThreshold) {
+    silenceStartedAt = null;
+    silenceStartedPosition = null;
     loudFrameCount += 1;
+    if (loudFrameCount >= 2 && !microphoneSpeaking) setMicrophoneSpeaking(true, requestId, position);
+    else if (microphoneSpeaking && !microphoneStatePositioned && position !== null) {
+      sendMicrophoneActivity(true, requestId, position);
+      microphoneStatePositioned = true;
+    }
     if (loudFrameCount >= 2 && requestId && position === null) {
       scoreStatus.textContent = "Aguardando sincronismo da TV.";
     }
-    if (loudFrameCount >= 2 && requestId && position !== null && socket?.readyState === WebSocket.OPEN) {
-      const bar = activeBars.find(candidate =>
-        position >= candidate.score_window_start_ms && position <= candidate.score_window_end_ms);
-      if (bar && !scoredBlocks.has(bar.block_index)) {
-        scoredBlocks.add(bar.block_index);
-        socket.send(JSON.stringify({
-          type: "vocal_onset",
-          request_id: requestId,
-          event_id: crypto.randomUUID(),
-          position_ms: position,
-        }));
-      } else if (!bar) {
-        const offCueWindow = Math.floor(position / offCueRearmMs);
-        if (!scoredOffCueWindows.has(offCueWindow)) {
-          scoredOffCueWindows.add(offCueWindow);
-          socket.send(JSON.stringify({
-            type: "vocal_onset",
-            request_id: requestId,
-            event_id: crypto.randomUUID(),
-            position_ms: position,
-          }));
-        }
-      }
-    }
   } else {
     loudFrameCount = 0;
+    if (microphoneSpeaking) {
+      if (silenceStartedAt === null) {
+        silenceStartedAt = performance.now();
+        silenceStartedPosition = position;
+      } else if (performance.now() - silenceStartedAt >= 300) {
+        setMicrophoneSpeaking(false, requestId, silenceStartedPosition);
+        silenceStartedAt = null;
+        silenceStartedPosition = null;
+      }
+    }
   }
   microphoneFrame = requestAnimationFrame(sampleMicrophone);
 }
@@ -635,6 +646,11 @@ microphoneButton.addEventListener("click", async () => {
     microphoneAnalyser = microphoneContext.createAnalyser();
     microphoneAnalyser.fftSize = 1024;
     source.connect(microphoneAnalyser);
+    loudFrameCount = 0;
+    silenceStartedAt = null;
+    silenceStartedPosition = null;
+    microphoneSpeaking = false;
+    microphoneStatePositioned = false;
     drawMicrophoneWaveform();
     scoreStatus.textContent = "Microfone ativo. Cante junto com as barras.";
     microphoneButton.textContent = "Microfone ativo";

@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import json
 from uuid import uuid4
 
 from app.media import MEDIA_ROOT
@@ -24,6 +25,77 @@ def connection():
         raise
     finally:
         database.close()
+
+
+def save_playback_sync(sync: dict | None) -> None:
+    with connection() as database:
+        if sync is None:
+            database.execute("DELETE FROM runtime_state WHERE key = 'playback_sync'")
+            return
+        database.execute(
+            "INSERT INTO runtime_state(key, value) VALUES ('playback_sync', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(sync),),
+        )
+
+
+def load_playback_sync() -> dict | None:
+    with connection() as database:
+        row = database.execute("SELECT value FROM runtime_state WHERE key = 'playback_sync'").fetchone()
+    return json.loads(row["value"]) if row else None
+
+
+def add_vocal_activity(
+    event_id: str, request_id: str, singer_id: str, speaking: bool,
+    position_ms: int | None, state_since_ms: int | None, created_at: float,
+) -> None:
+    with connection() as database:
+        database.execute(
+            "INSERT OR IGNORE INTO vocal_activity(event_id, request_id, singer_id, speaking, "
+            "position_ms, state_since_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (event_id, request_id, singer_id, int(speaking), position_ms, state_since_ms, created_at),
+        )
+        database.execute(
+            "DELETE FROM vocal_activity WHERE id <= "
+            "(SELECT COALESCE(MAX(id), 0) - 200 FROM vocal_activity)"
+        )
+
+
+def vocal_activity_since(event_id: int) -> list[dict]:
+    with connection() as database:
+        return [dict(row) for row in database.execute(
+            "SELECT id, event_id, request_id, singer_id, speaking, position_ms, state_since_ms "
+            "FROM vocal_activity WHERE id > ? ORDER BY id", (event_id,),
+        )]
+
+
+def latest_vocal_activity_id() -> int:
+    with connection() as database:
+        return database.execute("SELECT COALESCE(MAX(id), 0) FROM vocal_activity").fetchone()[0]
+
+
+def add_tv_notification(event_id: str, request_id: str, payload: dict) -> None:
+    with connection() as database:
+        database.execute(
+            "INSERT OR IGNORE INTO tv_notifications(event_id, request_id, payload) VALUES (?, ?, ?)",
+            (event_id, request_id, json.dumps(payload)),
+        )
+        database.execute(
+            "DELETE FROM tv_notifications WHERE id <= "
+            "(SELECT COALESCE(MAX(id), 0) - 200 FROM tv_notifications)"
+        )
+
+
+def tv_notifications_since(notification_id: int) -> list[dict]:
+    with connection() as database:
+        return [dict(row) for row in database.execute(
+            "SELECT id, payload FROM tv_notifications WHERE id > ? ORDER BY id", (notification_id,),
+        )]
+
+
+def latest_tv_notification_id() -> int:
+    with connection() as database:
+        return database.execute("SELECT COALESCE(MAX(id), 0) FROM tv_notifications").fetchone()[0]
 
 
 def initialize() -> None:
@@ -107,9 +179,33 @@ def initialize() -> None:
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 generation TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS runtime_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS vocal_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL UNIQUE,
+                request_id TEXT NOT NULL,
+                singer_id TEXT NOT NULL,
+                speaking INTEGER NOT NULL,
+                position_ms INTEGER,
+                state_since_ms INTEGER,
+                created_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tv_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL UNIQUE,
+                request_id TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
             """
         )
         database.execute("BEGIN IMMEDIATE")
+        if "position_ms" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_activity)")}:
+            database.execute("ALTER TABLE vocal_activity ADD COLUMN position_ms INTEGER")
+        if "state_since_ms" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_activity)")}:
+            database.execute("ALTER TABLE vocal_activity ADD COLUMN state_since_ms INTEGER")
         if "lead_accepted" not in {row[1] for row in database.execute("PRAGMA table_info(invitation)")}:
             database.execute("ALTER TABLE invitation ADD COLUMN lead_accepted INTEGER NOT NULL DEFAULT 0")
             database.execute("UPDATE invitation SET lead_accepted = accepted")

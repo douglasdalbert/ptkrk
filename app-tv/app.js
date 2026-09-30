@@ -14,13 +14,20 @@ let socket;
 let retryTimer;
 let activeId = null;
 let playbackSyncTimer = null;
+let playbackCalibrationStartedAt = 0;
+let lastPlaybackSyncAt = 0;
 let finishing = false;
 let skip = null;
 let barPosition = 1;
 let colorIndex = 0;
 let party = null;
+let activeSingerId = null;
 let captionBars = [];
+let scoreToleranceMs = 100;
 let hitBlocks = new Set();
+let blockResults = new Map();
+let sentBlockResults = new Set();
+let microphoneStateEvents = [];
 let captionFrame = null;
 const visibleBlocks = new Map();
 const approachMs = 3000;
@@ -51,6 +58,7 @@ function stopPlayback() {
   captionFrame = null;
   clearInterval(playbackSyncTimer);
   playbackSyncTimer = null;
+  playbackCalibrationStartedAt = 0;
   video.pause();
   video.removeAttribute("src");
   video.load();
@@ -61,6 +69,9 @@ function stopPlayback() {
   liveScore.textContent = "";
   captionBars = [];
   hitBlocks = new Set();
+  blockResults = new Map();
+  sentBlockResults = new Set();
+  microphoneStateEvents = [];
   visibleBlocks.clear();
   playButton.hidden = true;
   document.querySelector("#intermission").hidden = false;
@@ -70,22 +81,24 @@ async function startPlayback(item) {
   activeId = item.id;
   captionBars = [];
   hitBlocks = new Set();
+  blockResults = new Map();
+  sentBlockResults = new Set();
+  microphoneStateEvents = [];
   visibleBlocks.clear();
   lyricTrack.hidden = false;
   lyricText.replaceChildren();
   liveScore.hidden = true;
   liveScore.textContent = "";
   video.src = `/api/tv/${encodeURIComponent(item.id)}/video`;
+  playbackCalibrationStartedAt = performance.now();
+  lastPlaybackSyncAt = 0;
   loadCaptionBars(item.id);
   clearInterval(playbackSyncTimer);
   playbackSyncTimer = setInterval(() => {
-    if (socket?.readyState !== WebSocket.OPEN || !activeId) return;
-    socket.send(JSON.stringify({
-      type: "playback_sync",
-      request_id: activeId,
-      position_ms: Math.round(video.currentTime * 1000),
-      playing: !video.paused && !video.ended,
-    }));
+    const now = performance.now();
+    const calibration = now - playbackCalibrationStartedAt < 10_000;
+    if (!calibration && now - lastPlaybackSyncAt < 500) return;
+    sendPlaybackSync();
   }, 50);
   document.querySelector("#intermission").hidden = true;
   overlay.hidden = false;
@@ -97,12 +110,29 @@ async function startPlayback(item) {
   }
 }
 
+function sendPlaybackSync() {
+  if (socket?.readyState !== WebSocket.OPEN || !activeId) return;
+  lastPlaybackSyncAt = performance.now();
+  socket.send(JSON.stringify({
+    type: "playback_sync",
+    request_id: activeId,
+    position_ms: Math.round(video.currentTime * 1000),
+    playing: !video.paused && !video.ended,
+  }));
+}
+
+for (const eventName of ["playing", "pause", "waiting", "stalled", "seeked"])
+  video.addEventListener(eventName, sendPlaybackSync);
+
 async function loadCaptionBars(requestId) {
   try {
     const response = await fetch(`/api/tv/${encodeURIComponent(requestId)}/captions`, {
       credentials: "same-origin",
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      captionBars = [];
+      return;
+    }
     const result = await response.json();
     if (activeId !== requestId) return;
     captionBars = result.bars || [];
@@ -118,6 +148,38 @@ function renderCaptionBar() {
   const speed = width / (2 * approachMs);
   const visible = new Set();
   captionBars.forEach((bar, index) => {
+    const blockIndex = bar.block_index ?? index;
+    if (!blockResults.has(blockIndex) && time >= bar.start_ms + scoreToleranceMs + 350) {
+      const timeline = microphoneStateEvents
+        .filter(activity => activity.singer_id === activeSingerId &&
+          Number.isInteger(activity.state_since_ms))
+        .sort((left, right) => left.state_since_ms - right.state_since_ms);
+      const stateAtStart = timeline.filter(activity => activity.state_since_ms <= bar.start_ms).at(-1);
+      const startedInWindow = timeline.some(activity => activity.speaking &&
+        activity.state_since_ms > bar.start_ms &&
+        activity.state_since_ms <= bar.start_ms + scoreToleranceMs);
+      const hit = !!stateAtStart?.speaking || startedInWindow;
+      blockResults.set(blockIndex, hit);
+      console.log("[app-tv] Bloco avaliado", {
+        request_id: activeId,
+        block_index: blockIndex,
+        start_ms: bar.start_ms,
+        microphone_state: hit ? "falando" : "mudo",
+        result: hit ? "certo" : "falhou",
+      });
+    }
+    if (blockResults.has(blockIndex) && !sentBlockResults.has(blockIndex) &&
+        socket?.readyState === WebSocket.OPEN && activeSingerId) {
+      socket.send(JSON.stringify({
+        type: "block_result",
+        request_id: activeId,
+        event_id: crypto.randomUUID(),
+        singer_id: activeSingerId,
+        block_index: blockIndex,
+        hit: blockResults.get(blockIndex),
+      }));
+      sentBlockResults.add(blockIndex);
+    }
     const left = width / 2 + (bar.start_ms - time) * speed;
     if (left > width || left < -width / 2) return;
     visible.add(index);
@@ -131,7 +193,8 @@ function renderCaptionBar() {
       lyricText.append(block);
       visibleBlocks.set(index, block);
     }
-    block.dataset.result = hitBlocks.has(index) ? "hit" :
+    block.dataset.result = hitBlocks.has(blockIndex) ? "hit" :
+      blockResults.has(blockIndex) ? (blockResults.get(blockIndex) ? "hit" : "miss") :
       time > (bar.score_window_end_ms ?? bar.end_ms) ? "miss" : "waiting";
     block.style.transform = `translate3d(${left}px, 0, 0)`;
   });
@@ -164,6 +227,7 @@ function render(snapshot) {
     party = snapshot.party;
     refreshJoin();
   }
+  scoreToleranceMs = snapshot.score_tolerance_ms ?? scoreToleranceMs;
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
   const next = current || items.slice(0, 4).find(item => item.status === "ready");
@@ -174,6 +238,7 @@ function render(snapshot) {
   if (skipped) updateSkipClock();
 
   if (current && snapshot.invitation.accepted && !skipped) {
+    activeSingerId = current.singer_id;
     if (activeId !== current.id) startPlayback(current);
   } else if (activeId && (!current || current.id !== activeId || !snapshot.invitation.accepted)) {
     stopPlayback();
@@ -227,12 +292,39 @@ function connect() {
     setConnectionStatus("connected", "Conectado");
     const message = JSON.parse(event.data);
     if (message.type === "vocal_activity") {
-      if (message.request_id === activeId) animateVocalMarker();
+      if (message.request_id === activeId) {
+        microphoneStateEvents.push(message);
+        console.log(`[app-tv] Microfone: ${message.speaking ? "falando" : "mudo"}`, {
+          request_id: message.request_id,
+          singer_id: message.singer_id,
+          state_since_ms: message.state_since_ms,
+          received_position_ms: message.position_ms,
+          tv_position_ms: Math.round(video.currentTime * 1000),
+          clock_delta_ms: Number.isInteger(message.position_ms)
+            ? Math.round(video.currentTime * 1000) - message.position_ms
+            : null,
+          state_start_delta_ms: Number.isInteger(message.state_since_ms)
+            ? Math.round(video.currentTime * 1000) - message.state_since_ms
+            : null,
+        });
+        if (message.speaking) animateVocalMarker();
+        renderCaptionBar();
+      }
       return;
     }
     if (message.type === "score_update") {
       if (message.request_id !== activeId) return;
       if (message.result === "hit" && message.block_index != null) hitBlocks.add(message.block_index);
+      if (message.block_index != null && ["hit", "miss"].includes(message.result)) {
+        blockResults.set(message.block_index, message.result === "hit");
+      }
+      console.log("[app-tv] Resultado vocal recebido", {
+        request_id: message.request_id,
+        singer: message.name,
+        block_index: message.block_index,
+        result: message.result,
+      });
+      renderCaptionBar();
       liveScore.textContent = `${message.name}: ${message.points.toFixed(1)} / ${message.ranking_max}`;
       liveScore.hidden = false;
       return;
