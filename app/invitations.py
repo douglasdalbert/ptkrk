@@ -1,5 +1,6 @@
 import sqlite3
 
+from app.captions import selected_caption_path
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import PROTECTED_QUEUE_SIZE
 from app.scoring import finalize_performance
@@ -129,12 +130,12 @@ def finish_song(database: sqlite3.Connection, request_id: str, now: float) -> bo
     current = invitation_state(database)
     if current is None or current["request_id"] != request_id or not current["accepted"] or skip_state(database):
         return False
-    item = database.execute("SELECT video_id FROM requests WHERE id = ?", (request_id,)).fetchone()
+    item = database.execute("SELECT video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)).fetchone()
     generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
     finalize_performance(
         database,
         request_id,
-        MEDIA_ROOT / generation / "captions" / f"{item['video_id']}.json",
+        selected_caption_path(generation, item["video_id"], item["caption_track_id"]),
         MEDIA_ROOT / generation / "previews" / f"{item['video_id']}.jpg",
     )
     database.execute("UPDATE requests SET status = 'played' WHERE id = ?", (request_id,))

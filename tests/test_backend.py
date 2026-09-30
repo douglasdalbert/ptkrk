@@ -9,6 +9,7 @@ from unittest.mock import ANY, patch
 
 from fastapi import HTTPException
 
+from app.captions import CAPTION_VERSION
 from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
 from app.media import create_preview, remove_unused_media
 from app.queue import enqueue_request
@@ -84,7 +85,7 @@ class WorkerTests(unittest.TestCase):
             captions.write_text(json.dumps({"version": 5}), encoding="utf-8")
             self.assertEqual(outdated_ready_captions(set()), ("dQw4w9WgXcQ", generation))
             self.assertIsNone(outdated_ready_captions({(generation, "dQw4w9WgXcQ")}))
-            captions.write_text(json.dumps({"version": 8}), encoding="utf-8")
+            captions.write_text(json.dumps({"version": CAPTION_VERSION}), encoding="utf-8")
             self.assertIsNone(outdated_ready_captions(set()))
 
     def test_failure_marks_request_failed(self):
@@ -117,6 +118,7 @@ class WorkerTests(unittest.TestCase):
         preview = media_root / generation / "previews" / "dQw4w9WgXcQ.jpg"
         analysis = media_root / generation / "analysis" / "dQw4w9WgXcQ.json"
         captions = media_root / generation / "captions" / "dQw4w9WgXcQ.json"
+        alternate_captions = media_root / generation / "captions" / "dQw4w9WgXcQ.automatic-track.json"
         video.parent.mkdir(parents=True)
         preview.parent.mkdir(parents=True)
         analysis.parent.mkdir(parents=True)
@@ -125,6 +127,7 @@ class WorkerTests(unittest.TestCase):
         preview.write_bytes(b"preview")
         analysis.write_text("{}", encoding="utf-8")
         captions.write_text("{}", encoding="utf-8")
+        alternate_captions.write_text("{}", encoding="utf-8")
 
         with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "development"):
             with connection() as database:
@@ -141,6 +144,7 @@ class WorkerTests(unittest.TestCase):
             self.assertFalse(preview.exists())
             self.assertFalse(analysis.exists())
             self.assertFalse(captions.exists())
+            self.assertFalse(alternate_captions.exists())
 
     def test_preview_requires_ready_request(self):
         with patch("app.main.MEDIA_ROOT", Path(self.directory.name)):

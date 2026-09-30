@@ -1008,7 +1008,7 @@ function updateFooter() {
   const showingInvitation = !invitationView.hidden;
   skipButton.hidden = !allowSkip;
   skipAction.hidden = showingInvitation || !currentSong || (skipButton.hidden && boostButton.hidden);
-  actionFooter.hidden = !singer || (!showingInvitation && skipAction.hidden && skippingView.hidden);
+  actionFooter.hidden = !singer;
 }
 
 function updateSkipClock() {
@@ -1174,7 +1174,7 @@ function renderSearchResults(kind, items) {
     expand.setAttribute("aria-label", `Ampliar ${video.title}`);
     expand.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
     expand.addEventListener("click", () => openVideoPlayer(video));
-    media.append(image, expand);
+    media.append(image);
     const details = document.createElement("div");
     details.className = "search-details";
     const title = document.createElement("strong");
@@ -1189,7 +1189,7 @@ function renderSearchResults(kind, items) {
     select.dataset.title = video.title;
     select.addEventListener("click", () => selectVideo(video, status));
     renderSearchButton(select);
-    row.append(media, details, select);
+    row.append(media, details, expand, select);
     content.append(row);
   }
   list.replaceChildren(content);

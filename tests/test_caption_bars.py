@@ -1,6 +1,18 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from app.captions import parse_vtt_caption_bars, select_caption_track, select_native_caption_language, to_milliseconds
+from app.captions import (
+    caption_track_id,
+    caption_track_path,
+    create_caption_bars,
+    parse_vtt_caption_bars,
+    select_caption_track,
+    select_native_caption_language,
+    to_milliseconds,
+)
 
 
 class CaptionBarTests(unittest.TestCase):
@@ -60,6 +72,14 @@ class CaptionBarTests(unittest.TestCase):
         metadata = {"language": None, "subtitles": {}, "automatic_captions": {"en": []}}
         self.assertEqual(select_caption_track(metadata), ("en", True))
 
+    def test_skips_translated_subtitles_when_video_language_is_missing(self):
+        metadata = {
+            "language": None,
+            "subtitles": {"en": [{"url": "https://example.com/caption?lang=pt&tlang=en"}]},
+            "automatic_captions": {"pt": [{"url": "https://example.com/caption?lang=pt"}]},
+        }
+        self.assertEqual(select_caption_track(metadata), ("pt", True))
+
     def test_uses_native_language_when_original_variant_is_unavailable(self):
         metadata = {"language": "pt-BR", "automatic_captions": {"en": [], "pt": []}}
         self.assertEqual(select_native_caption_language(metadata), "pt")
@@ -68,6 +88,57 @@ class CaptionBarTests(unittest.TestCase):
         metadata = {"language": "ja", "automatic_captions": {"en": [], "fr": []}}
         with self.assertRaises(ValueError):
             select_native_caption_language(metadata)
+
+    def test_downloads_every_manual_and_automatic_caption_track(self):
+        metadata = {
+            "id": "videoid",
+            "language": "en",
+            "duration": 10,
+            "subtitles": {
+                "pt": [],
+                "fr": [{"url": "https://example.com/caption?lang=pt&tlang=fr"}],
+            },
+            "automatic_captions": {
+                "en-orig": [{"url": "https://example.com/caption?lang=en"}],
+                "pt": [],
+                "es": [{"url": "https://example.com/caption?lang=en&tlang=es"}],
+            },
+        }
+        downloaded = []
+
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                self.options = options
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def extract_info(self, url, download=False):
+                if "subtitleslangs" not in self.options:
+                    return metadata
+                language = self.options["subtitleslangs"][0]
+                automatic = self.options["writeautomaticsub"]
+                output = Path(self.options["outtmpl"].replace("%(id)s", "videoid").replace("%(ext)s", "vtt"))
+                output.write_text(
+                    f"WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n{language} {'auto' if automatic else 'manual'}\n",
+                    encoding="utf-8",
+                )
+                downloaded.append((language, automatic))
+                return metadata
+
+        with tempfile.TemporaryDirectory() as temporary_directory, \
+                patch("app.captions.MEDIA_ROOT", Path(temporary_directory)), \
+                patch("app.captions.YoutubeDL", FakeYoutubeDL):
+            result = create_caption_bars("videoid", "party")
+            self.assertEqual(set(downloaded), {("pt", False), ("en-orig", True), ("pt", True)})
+            self.assertEqual(len(result["tracks"]), 3)
+            self.assertEqual(result["default_track_id"], caption_track_id("en-orig", True))
+            self.assertEqual(result["bars"][0]["text"], "en-orig auto")
+            manual = json.loads(caption_track_path("party", "videoid", caption_track_id("pt", False)).read_text())
+            self.assertEqual(manual["bars"][0]["text"], "pt manual")
 
 
 if __name__ == "__main__":

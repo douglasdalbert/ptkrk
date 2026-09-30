@@ -14,12 +14,13 @@ from uuid import uuid4
 from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import qrcode
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
+from app.captions import caption_track_path, selected_caption_path
 from app.scoring import (
     block_duration_ms,
     boost_duration_ms,
@@ -116,6 +117,10 @@ class NoiseSetting(BaseModel):
     percent: int = Field(ge=1, le=50)
 
 
+class CaptionTrackSelection(BaseModel):
+    track_id: str = Field(min_length=1, max_length=40)
+
+
 def authenticated_tv() -> None:
     if os.getenv("KARAOKE_TV_LOCAL") != "true":
         raise HTTPException(404, "TV indisponível")
@@ -132,6 +137,10 @@ def youtube_id(code: str) -> str:
     if not VIDEO_ID.fullmatch(code):
         raise HTTPException(422, "Código de vídeo do YouTube inválido")
     return code
+
+
+def request_caption_path(generation: str, item) -> Path:
+    return selected_caption_path(generation, item["video_id"], item["caption_track_id"])
 
 
 def singer_for_token(token: str) -> str | None:
@@ -194,12 +203,21 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
         scoreboards = {singer["id"]: scoreboard_snapshot(database, singer["id"]) for singer in singers}
         scores = []
+        caption_tracks = []
+        active_caption_track_id = None
         if invitation:
             generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
             current_video = database.execute(
-                "SELECT video_id FROM requests WHERE id = ?", (invitation["request_id"],)
+                "SELECT video_id, caption_track_id FROM requests WHERE id = ?", (invitation["request_id"],)
             ).fetchone()
-            captions = MEDIA_ROOT / generation / "captions" / f"{current_video['video_id']}.json" if current_video else None
+            captions = request_caption_path(generation, current_video) if current_video else None
+            if captions and captions.is_file():
+                try:
+                    bundle = json.loads(caption_track_path(generation, current_video["video_id"]).read_text(encoding="utf-8"))
+                    caption_tracks = bundle.get("tracks", [])
+                    active_caption_track_id = current_video["caption_track_id"] or bundle.get("default_track_id")
+                except (OSError, json.JSONDecodeError):
+                    pass
             if include_caption_bars and captions and captions.is_file():
                 try:
                     active_bars = json.loads(captions.read_text(encoding="utf-8")).get("bars", [])
@@ -212,6 +230,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
             active_bars = []
     snapshot = {"type": "requests", "items": request_snapshot(), "invitation": invitation,
                 "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
+                "caption_tracks": caption_tracks, "caption_track_id": active_caption_track_id,
                 "scores": scores, "scoreboards": scoreboards, "ranking_max": max_score(),
                 "score_tolerance_ms": onset_tolerance_ms(),
                 "score_block_ms": block_duration_ms(),
@@ -444,7 +463,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     if owner is None:
                         continue
@@ -458,7 +477,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not eligible:
                         continue
                     generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-                    caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
+                    caption_path = request_caption_path(generation, owner)
                     database.execute("BEGIN IMMEDIATE")
                     update = record_block_result(
                         database, request_id, singer_id, event_id, block_index, hit, caption_path, boosted
@@ -481,7 +500,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     if owner is None:
                         continue
@@ -495,7 +514,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not eligible:
                         continue
                     generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-                    caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
+                    caption_path = request_caption_path(generation, owner)
                     database.execute("BEGIN IMMEDIATE")
                     update = record_offcue_penalty(
                         database, request_id, singer_id, event_id, position_ms, caption_path
@@ -589,7 +608,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     if owner is None:
                         continue
@@ -604,7 +623,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not eligible:
                         continue
                     generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
-                    caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
+                    caption_path = request_caption_path(generation, owner)
                     database.execute("BEGIN IMMEDIATE")
                     update = record_onset(
                         database, request_id, singer_id, event_id, position_ms, caption_path
@@ -708,6 +727,50 @@ def tv_start() -> dict:
     return {"invitation": invitation}
 
 
+@app.post("/api/tv/{request_id}/caption-track", dependencies=[Depends(tv_command)])
+def tv_select_caption_track(request_id: str, selection: CaptionTrackSelection) -> dict:
+    global playback_sync
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        invitation = invitation_state(database)
+        item = database.execute(
+            "SELECT video_id, caption_track_id FROM requests WHERE id = ? AND status = 'ready'",
+            (request_id,),
+        ).fetchone()
+        if not invitation or invitation["request_id"] != request_id or not invitation["accepted"] or item is None:
+            raise HTTPException(409, "A música não está em apresentação")
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        bundle_path = caption_track_path(generation, item["video_id"])
+        try:
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise HTTPException(404, "Legendas indisponíveis")
+        track_ids = {track.get("id") for track in bundle.get("tracks", [])}
+        if selection.track_id not in track_ids:
+            raise HTTPException(404, "Legenda indisponível")
+        active_track_id = item["caption_track_id"] or bundle.get("default_track_id")
+        if selection.track_id == active_track_id:
+            return {"track_id": active_track_id}
+        selected_path = selected_caption_path(generation, item["video_id"], selection.track_id)
+        if not selected_path.is_file():
+            raise HTTPException(404, "Arquivo de legenda indisponível")
+        database.execute(
+            "UPDATE requests SET caption_track_id = ? WHERE id = ?", (selection.track_id, request_id)
+        )
+        database.execute("DELETE FROM song_scores WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM score_events WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM vocal_activity WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM tv_notifications WHERE request_id = ?", (request_id,))
+        database.execute(
+            "INSERT INTO runtime_state(key, value) VALUES ('boost_state', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps({"request_id": request_id, "active": False, "ready": False}),),
+        )
+    playback_sync = None
+    save_playback_sync(None)
+    return {"track_id": selection.track_id}
+
+
 @app.post("/api/tv/{request_id}/finish", dependencies=[Depends(tv_command)])
 def tv_finish(request_id: str) -> dict:
     with connection() as database:
@@ -718,19 +781,35 @@ def tv_finish(request_id: str) -> dict:
 
 
 @app.get("/api/tv/{request_id}/{kind}", dependencies=[Depends(authenticated_tv)])
-def tv_media(request_id: str, kind: str) -> FileResponse:
+def tv_media(request_id: str, kind: str) -> Response:
     if kind not in {"video", "preview", "captions"}:
         raise HTTPException(404, "Mídia indisponível")
     with connection() as database:
-        item = database.execute("SELECT video_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)).fetchone()
+        item = database.execute(
+            "SELECT video_id, caption_track_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)
+        ).fetchone()
     if item is None:
         raise HTTPException(404, "Mídia indisponível")
     with connection() as database:
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+    if kind == "captions":
+        bundle_path = caption_track_path(generation, item["video_id"])
+        try:
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise HTTPException(404, "Mídia indisponível")
+        selected_id = item["caption_track_id"] or bundle.get("default_track_id")
+        selected_path = selected_caption_path(generation, item["video_id"], selected_id)
+        try:
+            captions = json.loads(selected_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise HTTPException(404, "Mídia indisponível")
+        return JSONResponse({**captions, "tracks": bundle.get("tracks", []),
+                             "default_track_id": bundle.get("default_track_id"),
+                             "selected_track_id": selected_id})
     category, suffix = {
         "video": ("videos", ".mp4"),
         "preview": ("previews", ".jpg"),
-        "captions": ("captions", ".json"),
     }[kind]
     media = MEDIA_ROOT / generation / category / f"{item['video_id']}{suffix}"
     if not media.is_file():

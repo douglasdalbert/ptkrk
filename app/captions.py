@@ -1,8 +1,10 @@
 import html
+import hashlib
 import json
 import re
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from yt_dlp import YoutubeDL
 
@@ -19,7 +21,7 @@ INLINE_TIMESTAMP = re.compile(r"<(?P<time>\d{2}:\d{2}:\d{2}\.\d{3})>")
 BRACKETED_TEXT = re.compile(r"(?:\[[^\]\r\n]*\]|\([^\)\r\n]*\))")
 DECORATION = re.compile(r"[\s♪♫♬♩]+")
 SPEAKER_MARKER = re.compile(r"(^|\n)[^\S\r\n]*>>[^\S\r\n]*")
-CAPTION_VERSION = 9
+CAPTION_VERSION = 11
 
 
 def normalized_words(text: str) -> list[str]:
@@ -60,8 +62,18 @@ def to_milliseconds(timestamp: str) -> int:
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds
 
 
+def original_caption_tracks(tracks: dict) -> dict:
+    return {
+        language: formats for language, formats in tracks.items()
+        if not formats or any(
+            "tlang" not in parse_qs(urlsplit(caption_format.get("url") or "").query)
+            for caption_format in formats
+        )
+    }
+
+
 def select_native_caption_language(metadata: dict) -> str:
-    available = metadata.get("automatic_captions") or {}
+    available = original_caption_tracks(metadata.get("automatic_captions") or {})
     if not available:
         raise ValueError("O vídeo não oferece legendas geradas automaticamente")
 
@@ -89,13 +101,35 @@ def select_native_caption_language(metadata: dict) -> str:
 
 def select_caption_track(metadata: dict) -> tuple[str, bool]:
     if not metadata.get("language"):
-        subtitles = metadata.get("subtitles") or {}
+        subtitles = original_caption_tracks(metadata.get("subtitles") or {})
         if subtitles:
             return next(iter(subtitles)), False
-        automatic = metadata.get("automatic_captions") or {}
+        automatic = original_caption_tracks(metadata.get("automatic_captions") or {})
         if automatic:
             return next(iter(automatic)), True
     return select_native_caption_language(metadata), True
+
+
+def caption_track_id(language: str, automatic: bool) -> str:
+    source = "automatic" if automatic else "manual"
+    language_hash = hashlib.sha256(language.encode("utf-8")).hexdigest()[:12]
+    return f"{source}-{language_hash}"
+
+
+def caption_track_path(generation: str, video_id: str, track_id: str | None = None) -> Path:
+    directory = MEDIA_ROOT / generation / "captions"
+    return directory / (f"{video_id}.json" if track_id is None else f"{video_id}.{track_id}.json")
+
+
+def selected_caption_path(generation: str, video_id: str, track_id: str | None = None) -> Path:
+    bundle = caption_track_path(generation, video_id)
+    if track_id is None or not bundle.is_file():
+        return bundle
+    try:
+        default_id = json.loads(bundle.read_text(encoding="utf-8")).get("default_track_id")
+    except (OSError, json.JSONDecodeError):
+        return bundle
+    return bundle if track_id == default_id else caption_track_path(generation, video_id, track_id)
 
 
 def parse_vtt_caption_bars(
@@ -212,8 +246,7 @@ def create_caption_bars(
     max_block_ms = block_duration_ms() if max_block_ms is None else max_block_ms
     history_ms = caption_history_ms()
     repeat_percent = caption_repeat_percent()
-    root = MEDIA_ROOT / generation
-    output = root / "captions" / f"{video_id}.json"
+    output = caption_track_path(generation, video_id)
     if output.is_file():
         try:
             cached = json.loads(output.read_text(encoding="utf-8"))
@@ -222,6 +255,7 @@ def create_caption_bars(
                     and cached.get("max_block_ms") == max_block_ms
                     and cached.get("history_ms") == history_ms
                     and cached.get("repeat_percent") == repeat_percent
+                    and isinstance(cached.get("tracks"), list)
                     and isinstance(cached.get("bars"), list)):
                 return cached
         except (OSError, json.JSONDecodeError):
@@ -231,46 +265,85 @@ def create_caption_bars(
     with YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True,
                     "noplaylist": True, "socket_timeout": 20}) as downloader:
         metadata = downloader.extract_info(url, download=False)
-    language, automatic = select_caption_track(metadata)
-
-    with tempfile.TemporaryDirectory(prefix="karaoke-captions-") as temporary_directory:
-        temporary_path = Path(temporary_directory)
-        options = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "writeautomaticsub": automatic,
-            "writesubtitles": not automatic,
-            "subtitleslangs": [language],
-            "subtitlesformat": "vtt",
-            "noplaylist": True,
-            "socket_timeout": 20,
-            "outtmpl": str(temporary_path / "%(id)s.%(ext)s"),
-        }
-        with YoutubeDL(options) as downloader:
-            metadata = downloader.extract_info(url, download=True)
-        caption_path = temporary_path / f"{metadata['id']}.{language}.vtt"
-        if not caption_path.is_file():
-            raise ValueError(f"Legenda automática {language} indisponível")
-        duration_ms = round(float(metadata.get("duration") or 0) * 1000)
-        parsed = parse_vtt_caption_bars(
-            caption_path.read_text(encoding="utf-8"), duration_ms, onset_tolerance_ms, max_block_ms,
-            history_ms, repeat_percent
-        )
-
-    result = {
-        "version": CAPTION_VERSION,
-        "video_id": video_id,
-        "language": language,
-        "duration_ms": duration_ms,
-        "onset_tolerance_ms": onset_tolerance_ms,
-        "max_block_ms": max_block_ms,
-        "history_ms": history_ms,
-        "repeat_percent": repeat_percent,
-        "timing_method": "native_vtt_segments_with_rolling_overlap_removed",
-        **parsed,
-    }
+    selected_language, selected_automatic = select_caption_track(metadata)
+    available = [
+        (language, False) for language in original_caption_tracks(metadata.get("subtitles") or {})
+    ] + [
+        (language, True) for language in original_caption_tracks(metadata.get("automatic_captions") or {})
+    ]
+    preferred_id = caption_track_id(selected_language, selected_automatic)
+    duration_ms = round(float(metadata.get("duration") or 0) * 1000)
     output.parent.mkdir(parents=True, exist_ok=True)
+    tracks = []
+    parsed_tracks = {}
+    for language, automatic in available:
+        track_id = caption_track_id(language, automatic)
+        try:
+            with tempfile.TemporaryDirectory(prefix="karaoke-captions-") as temporary_directory:
+                temporary_path = Path(temporary_directory)
+                options = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "skip_download": True,
+                    "writeautomaticsub": automatic,
+                    "writesubtitles": not automatic,
+                    "subtitleslangs": [language],
+                    "subtitlesformat": "vtt",
+                    "noplaylist": True,
+                    "socket_timeout": 20,
+                    "outtmpl": str(temporary_path / "%(id)s.%(ext)s"),
+                }
+                with YoutubeDL(options) as downloader:
+                    downloader.extract_info(url, download=True)
+                caption_files = list(temporary_path.glob("*.vtt"))
+                if not caption_files:
+                    continue
+                parsed = parse_vtt_caption_bars(
+                    caption_files[0].read_text(encoding="utf-8"), duration_ms, onset_tolerance_ms,
+                    max_block_ms, history_ms, repeat_percent,
+                )
+            track = {
+                "id": track_id,
+                "language": language,
+                "automatic": automatic,
+                "label": f"{language} · {'Automática' if automatic else 'Manual'}",
+            }
+            tracks.append(track)
+            parsed_tracks[track_id] = {
+                "version": CAPTION_VERSION,
+                "video_id": video_id,
+                "language": language,
+                "duration_ms": duration_ms,
+                "onset_tolerance_ms": onset_tolerance_ms,
+                "max_block_ms": max_block_ms,
+                "history_ms": history_ms,
+                "repeat_percent": repeat_percent,
+                "timing_method": "native_vtt_segments_with_rolling_overlap_removed",
+                **parsed,
+            }
+        except Exception:
+            continue
+
+    if not tracks:
+        raise ValueError("Não foi possível baixar as legendas disponíveis")
+    default_track = next((track for track in tracks if track["id"] == preferred_id), tracks[0])
+    result = parsed_tracks[default_track["id"]]
+    result["default_track_id"] = default_track["id"]
+    result["tracks"] = tracks
+    alternate_names = {
+        f"{video_id}.{track_id}.json" for track_id in parsed_tracks if track_id != default_track["id"]
+    }
+    for stale_file in output.parent.glob(f"{video_id}.*.json"):
+        if stale_file.name not in alternate_names:
+            stale_file.unlink(missing_ok=True)
+    for track_id, parsed in parsed_tracks.items():
+        if track_id == default_track["id"]:
+            continue
+        alternate = caption_track_path(generation, video_id, track_id)
+        temporary_output = alternate.with_suffix(".tmp")
+        temporary_output.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
+        temporary_output.replace(alternate)
+
     temporary_output = output.with_suffix(".tmp")
     temporary_output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     temporary_output.replace(output)
@@ -278,4 +351,7 @@ def create_caption_bars(
 
 
 def remove_caption_bars(video_id: str, generation: str) -> None:
-    (MEDIA_ROOT / generation / "captions" / f"{video_id}.json").unlink(missing_ok=True)
+    directory = MEDIA_ROOT / generation / "captions"
+    (directory / f"{video_id}.json").unlink(missing_ok=True)
+    for alternate in directory.glob(f"{video_id}.*.json"):
+        alternate.unlink(missing_ok=True)

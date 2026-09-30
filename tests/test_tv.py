@@ -23,9 +23,15 @@ class TvTests(unittest.TestCase):
         root = Path(self.directory.name)
         self.database_patch = patch("app.storage.DATABASE_PATH", root / "karaoke.sqlite3")
         self.media_patch = patch("app.main.MEDIA_ROOT", root)
+        self.shared_media_patch = patch("app.media.MEDIA_ROOT", root)
+        self.invitation_media_patch = patch("app.invitations.MEDIA_ROOT", root)
+        self.caption_media_patch = patch("app.captions.MEDIA_ROOT", root)
         self.environment = patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "true", "KARAOKE_LAN_IP": "192.168.68.108"})
         self.database_patch.start()
         self.media_patch.start()
+        self.shared_media_patch.start()
+        self.invitation_media_patch.start()
+        self.caption_media_patch.start()
         self.environment.start()
         self.client = TestClient(app, base_url="http://localhost:8001")
         self.client.__enter__()
@@ -33,6 +39,9 @@ class TvTests(unittest.TestCase):
     def tearDown(self):
         self.client.__exit__(None, None, None)
         self.environment.stop()
+        self.caption_media_patch.stop()
+        self.invitation_media_patch.stop()
+        self.shared_media_patch.stop()
         self.media_patch.stop()
         self.database_patch.stop()
         self.directory.cleanup()
@@ -182,6 +191,72 @@ class TvTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(json.loads(row["hit_blocks"]), [0])
         self.assertEqual(row["penalties"], 1)
+
+    def test_tv_caption_switch_resets_score_without_ending_singer_turn(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) "
+                "VALUES (1,'song',0,1,1)"
+            )
+            database.execute(
+                "INSERT INTO song_scores(request_id,singer_id,hit_blocks,penalties,score_units) "
+                "VALUES ('song','singer','[0]',2,0)"
+            )
+            database.execute(
+                "INSERT INTO score_events(event_id,request_id,singer_id,event_type) "
+                "VALUES ('old-hit','song','singer','hit'),('old-penalty','song','singer','off_cue')"
+            )
+        captions_dir = Path(self.directory.name) / generation / "captions"
+        captions_dir.mkdir(parents=True)
+        manifest = {
+            "default_track_id": "automatic-default",
+            "tracks": [
+                {"id": "automatic-default", "label": "en · Automática", "automatic": True},
+                {"id": "manual-alternative", "label": "pt · Manual", "automatic": False},
+            ],
+            "bars": [
+                {"text": "default", "start_ms": 0, "end_ms": 1000},
+                {"text": "second default block", "start_ms": 2000, "end_ms": 3000},
+            ],
+            "duration_ms": 10000,
+        }
+        (captions_dir / "glvVYIhdWlU.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (captions_dir / "glvVYIhdWlU.manual-alternative.json").write_text(json.dumps({
+            "bars": [{"text": "alternativa", "start_ms": 0, "end_ms": 1000}],
+            "duration_ms": 10000,
+        }), encoding="utf-8")
+        self.assertEqual(self.client.get("/api/tv/song/captions").json()["bars"][0]["text"], "default")
+        main_module.playback_sync = {
+            "request_id": "song", "position_ms": 4000, "server_time": time.time(),
+            "server_time_ms": round(time.time() * 1000),
+        }
+        save_playback_sync(main_module.playback_sync)
+
+        response = self.client.post("/api/tv/song/caption-track", headers=self.tv_headers,
+                                    json={"track_id": "manual-alternative"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"track_id": "manual-alternative"})
+        self.assertEqual(self.client.get("/api/tv/song/captions").json()["bars"][0]["text"], "alternativa")
+        with connection() as database:
+            request = database.execute("SELECT caption_track_id FROM requests WHERE id='song'").fetchone()
+            self.assertEqual(request["caption_track_id"], "manual-alternative")
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM song_scores WHERE request_id='song'").fetchone()[0], 0)
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM score_events WHERE request_id='song'").fetchone()[0], 0)
+            self.assertTrue(database.execute(
+                "SELECT accepted FROM invitation WHERE request_id='song'"
+            ).fetchone()[0])
+            database.execute(
+                "INSERT INTO song_scores(request_id,singer_id,hit_blocks,score_units) "
+                "VALUES ('song','singer','[0]',1)"
+            )
+        self.assertIsNone(main_module.load_playback_sync())
+        self.assertEqual(self.client.post("/api/tv/song/finish", headers=self.tv_headers).status_code, 200)
+        with connection() as database:
+            points = database.execute("SELECT points FROM score_history WHERE request_id='song'").fetchone()[0]
+        self.assertEqual(points, 1000.0)
 
     def test_reset_keeps_join_url_but_invalidates_sessions_and_media(self):
         self.add_ready()

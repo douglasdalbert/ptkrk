@@ -9,6 +9,8 @@ const connectionStatus = document.querySelector("#connect-status");
 const lyricTrack = document.querySelector("#track");
 const vocalMarker = document.querySelector("#vocal-marker");
 const lyricText = document.querySelector("#lyric-text");
+const captionSwitcher = document.querySelector("#caption-switcher");
+const captionOptions = document.querySelector("#caption-options");
 const boostBar = document.querySelector("#boost-bar");
 const boostLabel = document.querySelector("#boost-label");
 const boostStars = document.querySelector("#boost-stars");
@@ -24,6 +26,8 @@ let boostedBlocks = new Set();
 let socket;
 let retryTimer;
 let activeId = null;
+let activeTrackItem = null;
+let captionLoadToken = 0;
 let playbackSyncTimer = null;
 let playbackCalibrationStartedAt = 0;
 let lastPlaybackSyncAt = 0;
@@ -62,6 +66,7 @@ const scoreBackdrop = document.querySelector("#score-backdrop");
 const scoreStar = document.querySelector("#score-star");
 const scoreValue = document.querySelector("#score-value");
 const scoreStreamers = document.querySelector("#score-streamers");
+const currentScoreValue = document.querySelector("#current-score-value");
 const missColor = "#f47783";
 const hitColor = "#5ac8e4";
 const goldColor = "#ffe94d";
@@ -216,7 +221,10 @@ function spawnBoostStar() {
 function stopPlayback() {
   closeScorePanel();
   activeId = null;
+  activeTrackItem = null;
+  captionLoadToken += 1;
   activeScorePoints = 0;
+  currentScoreValue.textContent = "0";
   resetBoost();
   cancelAnimationFrame(captionFrame);
   captionFrame = null;
@@ -230,6 +238,8 @@ function stopPlayback() {
   lyricTrack.hidden = true;
   lyricText.replaceChildren();
   captionBars = [];
+  captionSwitcher.hidden = true;
+  captionOptions.replaceChildren();
   hitBlocks = new Set();
   blockResults = new Map();
   sentBlockResults = new Set();
@@ -243,8 +253,9 @@ function stopPlayback() {
 
 async function startPlayback(item) {
   closeScorePanel();
-  activeId = item.id;
+  activeTrackItem = item;
   activeScorePoints = 0;
+  currentScoreValue.textContent = "0";
   resetBoost();
   captionBars = [];
   hitBlocks = new Set();
@@ -257,11 +268,18 @@ async function startPlayback(item) {
   lyricTrack.hidden = false;
   lyricText.replaceChildren();
   video.volume = 1;
+  clearInterval(playbackSyncTimer);
+  playbackSyncTimer = null;
+  activeId = null;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  activeId = item.id;
   video.src = `/api/tv/${encodeURIComponent(item.id)}/video`;
+  video.load();
   playbackCalibrationStartedAt = performance.now();
   lastPlaybackSyncAt = 0;
   loadCaptionBars(item.id);
-  clearInterval(playbackSyncTimer);
   playbackSyncTimer = setInterval(() => {
     const now = performance.now();
     const calibration = now - playbackCalibrationStartedAt < 10_000;
@@ -293,20 +311,62 @@ for (const eventName of ["playing", "pause", "waiting", "stalled", "seeked"])
   video.addEventListener(eventName, sendPlaybackSync);
 
 async function loadCaptionBars(requestId) {
+  const loadToken = ++captionLoadToken;
   try {
     const response = await fetch(`/api/tv/${encodeURIComponent(requestId)}/captions`, {
       credentials: "same-origin",
     });
+    if (activeId !== requestId || loadToken !== captionLoadToken) return;
     if (!response.ok) {
       captionBars = [];
+      renderCaptionOptions([], null);
       return;
     }
     const result = await response.json();
-    if (activeId !== requestId) return;
+    if (activeId !== requestId || loadToken !== captionLoadToken) return;
     captionBars = result.bars || [];
+    renderCaptionOptions(result.tracks || [], result.selected_track_id);
     renderCaptionBar();
   } catch {
-    captionBars = [];
+    if (activeId === requestId && loadToken === captionLoadToken) {
+      captionBars = [];
+      renderCaptionOptions([], null);
+    }
+  }
+}
+
+function renderCaptionOptions(tracks, selectedTrackId) {
+  captionSwitcher.hidden = tracks.length <= 1;
+  captionOptions.replaceChildren(...tracks.map(track => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.trackId = track.id;
+    button.textContent = track.label || track.language || "Legenda";
+    button.title = track.label || track.language || "Legenda";
+    button.setAttribute("aria-pressed", String(track.id === selectedTrackId));
+    button.addEventListener("click", () => switchCaptionTrack(track.id));
+    return button;
+  }));
+}
+
+async function switchCaptionTrack(trackId) {
+  const selectedButton = [...captionOptions.children].find(button =>
+    button.getAttribute("aria-pressed") === "true");
+  if (!activeId || !activeTrackItem || trackId === selectedButton?.dataset.trackId) return;
+  const requestId = activeId;
+  const item = activeTrackItem;
+  captionOptions.querySelectorAll("button").forEach(button => { button.disabled = true; });
+  try {
+    await command(`/api/tv/${encodeURIComponent(requestId)}/caption-track`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({track_id: trackId}),
+    });
+    if (activeId === requestId) startPlayback(item);
+  } catch (problem) {
+    error.textContent = problem.message;
+  } finally {
+    captionOptions.querySelectorAll("button").forEach(button => { button.disabled = false; });
   }
 }
 
@@ -471,6 +531,7 @@ function render(snapshot) {
 
   if (current && snapshot.invitation.accepted && !skipped) {
     activeSingerId = current.singer_id;
+    activeTrackItem = current;
     if (activeId !== current.id) startPlayback(current);
   } else if (activeId && (!current || current.id !== activeId || !snapshot.invitation.accepted)) {
     stopPlayback();
@@ -547,7 +608,10 @@ function connect() {
         blockResults.set(message.block_index, message.result === "hit");
       }
       renderCaptionBar();
-      if (message.singer_id === activeSingerId) activeScorePoints = message.points;
+      if (message.singer_id === activeSingerId) {
+        activeScorePoints = message.points;
+        currentScoreValue.textContent = String(Math.round(activeScorePoints));
+      }
       return;
     }
     if (message.type === "requests") render(message);

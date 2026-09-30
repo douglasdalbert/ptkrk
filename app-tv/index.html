@@ -39,13 +39,20 @@
           <h2 id="queue-title">Próximas músicas</h2>
           <div class="upcoming" id="upcoming"></div>
         </section>
-        <section class="actions" aria-label="Ações da TV">
-          <button id="noise-action" type="button" title="Ajustar ruído: - ou _ diminui, + ou = aumenta"><span id="noise-label" aria-live="polite">Ruído --%</span> <span class="keycaps"><kbd>−</kbd><kbd>+</kbd></span></button>
-          <button id="play-action" type="button" title="Reproduzir o vídeo (Espaço)" disabled>Reproduzir <kbd>Espaço</kbd></button>
-          <button id="move-track-action" type="button" title="Mover blocos (setas para cima e para baixo)">Mover blocos <span class="keycaps"><kbd>↑</kbd><kbd>↓</kbd></span></button>
-          <button id="color-action" type="button" title="Alternar as cores dos blocos (C)">Alterne as cores dos blocos <kbd>C</kbd></button>
-          <button id="reset-action" type="button" title="Iniciar nova festa (Ctrl+Alt+N)">Nova festa <kbd>Ctrl+Alt+N</kbd></button>
-        </section>
+        <div class="footer-controls">
+          <section id="caption-switcher" class="caption-switcher" aria-label="Legendas da música" hidden>
+            <h2>Legendas</h2>
+            <div id="caption-options"></div>
+          </section>
+          <section class="actions" aria-label="Ações da TV">
+            <button id="current-score-action" type="button" disabled><span class="current-score-star" aria-hidden="true">★</span> <span id="current-score-value">0</span></button>
+            <button id="noise-action" type="button" title="Ajustar ruído: - ou _ diminui, + ou = aumenta"><span id="noise-label" aria-live="polite">Ruído --%</span> <span class="keycaps"><kbd>−</kbd><kbd>+</kbd></span></button>
+            <button id="play-action" type="button" title="Reproduzir o vídeo (Espaço)" disabled>Reproduzir <kbd>Espaço</kbd></button>
+            <button id="move-track-action" type="button" title="Mover blocos (setas para cima e para baixo)">Mover blocos <span class="keycaps"><kbd>↑</kbd><kbd>↓</kbd></span></button>
+            <button id="color-action" type="button" title="Alternar as cores dos blocos (C)">Alterne as cores dos blocos <kbd>C</kbd></button>
+            <button id="reset-action" type="button" title="Iniciar nova festa (Ctrl+Alt+N)">Nova festa <kbd>Ctrl+Alt+N</kbd></button>
+          </section>
+        </div>
         <aside class="join" id="join">
           <h2>Entre na festa</h2>
           <img id="qr" alt="QR para entrar na festa" hidden>

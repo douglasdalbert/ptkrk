@@ -121,6 +121,7 @@ def initialize() -> None:
                 status TEXT NOT NULL DEFAULT 'pending',
                 title TEXT,
                 error TEXT,
+                caption_track_id TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS requests_status_idx ON requests(status, created_at);
@@ -230,6 +231,8 @@ def initialize() -> None:
             database.execute("ALTER TABLE backvocals ADD COLUMN score_eligible INTEGER NOT NULL DEFAULT 1")
         if "offcue_window" not in {row[1] for row in database.execute("PRAGMA table_info(score_events)")}:
             database.execute("ALTER TABLE score_events ADD COLUMN offcue_window INTEGER")
+        if "caption_track_id" not in {row[1] for row in database.execute("PRAGMA table_info(requests)")}:
+            database.execute("ALTER TABLE requests ADD COLUMN caption_track_id TEXT")
         if "score_units" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
             database.execute("ALTER TABLE song_scores ADD COLUMN score_units INTEGER")
         if "boosted_blocks" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
