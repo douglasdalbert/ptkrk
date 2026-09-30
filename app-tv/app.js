@@ -13,6 +13,9 @@ const liveScore = document.querySelector("#live-score");
 const boostBar = document.querySelector("#boost-bar");
 const boostLabel = document.querySelector("#boost-label");
 const boostBonuses = document.querySelector("#boost-bonuses");
+const boostStars = document.querySelector("#boost-stars");
+const starColors = ["#ff2bd6", "#00e5ff", "#39ff88", "#fff34d", "#b58cff"];
+const svgNamespace = "http://www.w3.org/2000/svg";
 let boostFillPercent = 25;
 let boostDurationMs = 15000;
 let boostMultiplier = 1.5;
@@ -98,6 +101,7 @@ function resetBoost() {
   show.classList.remove("boost-active");
   boostBar.classList.remove("just-filled");
   boostBonuses.replaceChildren();
+  boostStars.replaceChildren();
   updateBoostBar();
 }
 
@@ -161,6 +165,36 @@ function showBoostBonus(bonusPoints) {
   bonus.addEventListener("animationend", () => bonus.remove(), { once: true });
   boostBonuses.prepend(bonus);
   while (boostBonuses.children.length > 4) boostBonuses.lastElementChild.remove();
+}
+
+function spawnBoostStar() {
+  const width = overlay.clientWidth;
+  const height = overlay.clientHeight;
+  if (!width || !height) return;
+  // Same vertical anchors as moveTrack(); stars avoid the lane where the lyric blocks are.
+  const anchors = [Math.max(height * 0.07, 105), height / 2, Math.min(height * 0.88, height - 105)];
+  const regions = anchors.filter((_, index) => index !== barPosition);
+  const spread = Math.min(height * 0.09, 105) / 2;
+  const y = regions[Math.floor(Math.random() * regions.length)] + (Math.random() * 2 - 1) * spread;
+  const x = width * (0.1 + Math.random() * 0.8);
+
+  const star = document.createElementNS(svgNamespace, "svg");
+  star.setAttribute("viewBox", "0 0 100 100");
+  star.classList.add("boost-star");
+  star.style.left = `${x}px`;
+  star.style.top = `${y}px`;
+  star.style.setProperty("--star-color", starColors[Math.floor(Math.random() * starColors.length)]);
+  star.style.setProperty("--star-turn", `${Math.round(Math.random() * 60 - 30)}deg`);
+  const shape = document.createElementNS(svgNamespace, "polygon");
+  shape.setAttribute("points", "50,3 62,36 97,37 69,58 80,93 50,73 20,93 31,58 3,37 38,36");
+  const label = document.createElementNS(svgNamespace, "text");
+  label.setAttribute("x", "50");
+  label.setAttribute("y", "57");
+  label.textContent = `${formatNumber(boostMultiplier)}x`;
+  star.append(shape, label);
+  star.addEventListener("animationend", () => star.remove(), { once: true });
+  boostStars.append(star);
+  while (boostStars.children.length > 12) boostStars.firstElementChild.remove();
 }
 
 function stopPlayback() {
@@ -479,7 +513,10 @@ function connect() {
     }
     if (message.type === "score_update") {
       if (message.request_id !== activeId) return;
-      if (message.boosted && message.bonus_points > 0) showBoostBonus(message.bonus_points);
+      if (message.boosted && message.bonus_points > 0) {
+        showBoostBonus(message.bonus_points);
+        spawnBoostStar();
+      }
       if (message.result === "hit" && message.block_index != null) hitBlocks.add(message.block_index);
       if (message.block_index != null && ["hit", "miss"].includes(message.result)) {
         blockResults.set(message.block_index, message.result === "hit");
