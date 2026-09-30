@@ -35,6 +35,9 @@ from app.scoring import (
     record_onset,
     score_lane_count,
     score_snapshot,
+    star_close_ms,
+    star_high_percent,
+    star_low_percent,
 )
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
@@ -215,6 +218,9 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "boost_duration_ms": boost_duration_ms(),
                 "boost_multiplier": boost_multiplier(),
                 "boost_loudness_percent": boost_loudness_percent(),
+                "star_low_percent": star_low_percent(),
+                "star_high_percent": star_high_percent(),
+                "star_close_ms": star_close_ms(),
                 "boost_active": boost_active,
                 "boost_ready": boost_ready}
     if include_caption_bars:

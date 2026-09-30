@@ -9,7 +9,6 @@ const connectionStatus = document.querySelector("#connect-status");
 const lyricTrack = document.querySelector("#track");
 const vocalMarker = document.querySelector("#vocal-marker");
 const lyricText = document.querySelector("#lyric-text");
-const liveScore = document.querySelector("#live-score");
 const boostBar = document.querySelector("#boost-bar");
 const boostLabel = document.querySelector("#boost-label");
 const boostStars = document.querySelector("#boost-stars");
@@ -58,6 +57,22 @@ const approachMs = 3000;
 const laneResetPauseMs = 5000;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
 const confirmDialog = new ConfirmDialog();
+const scorePanel = document.querySelector("#score-panel");
+const scoreBackdrop = document.querySelector("#score-backdrop");
+const scoreStar = document.querySelector("#score-star");
+const scoreValue = document.querySelector("#score-value");
+const scoreStreamers = document.querySelector("#score-streamers");
+const missColor = "#f47783";
+const hitColor = "#5ac8e4";
+const goldColor = "#ffe94d";
+let rankingMax = 1000;
+let activeScorePoints = 0;
+let starLowPercent = 25;
+let starHighPercent = 75;
+let starCloseMs = 30000;
+let scoreShow = null;
+let audioContext = null;
+let noise = null;
 
 function setConnectionStatus(state, label) {
   connectionStatus.dataset.state = state;
@@ -198,7 +213,9 @@ function spawnBoostStar() {
 }
 
 function stopPlayback() {
+  closeScorePanel();
   activeId = null;
+  activeScorePoints = 0;
   resetBoost();
   cancelAnimationFrame(captionFrame);
   captionFrame = null;
@@ -211,8 +228,6 @@ function stopPlayback() {
   overlay.hidden = true;
   lyricTrack.hidden = true;
   lyricText.replaceChildren();
-  liveScore.hidden = true;
-  liveScore.textContent = "";
   captionBars = [];
   hitBlocks = new Set();
   blockResults = new Map();
@@ -226,7 +241,9 @@ function stopPlayback() {
 }
 
 async function startPlayback(item) {
+  closeScorePanel();
   activeId = item.id;
+  activeScorePoints = 0;
   resetBoost();
   captionBars = [];
   hitBlocks = new Set();
@@ -238,8 +255,7 @@ async function startPlayback(item) {
   visibleBlocks.clear();
   lyricTrack.hidden = false;
   lyricText.replaceChildren();
-  liveScore.hidden = true;
-  liveScore.textContent = "";
+  video.volume = 1;
   video.src = `/api/tv/${encodeURIComponent(item.id)}/video`;
   playbackCalibrationStartedAt = performance.now();
   lastPlaybackSyncAt = 0;
@@ -294,6 +310,8 @@ async function loadCaptionBars(requestId) {
 }
 
 function renderCaptionBar() {
+  // The song is over while the star is shown; late microphone events must not change the score.
+  if (scoreShow) return;
   const time = video.currentTime * 1000;
   const width = overlay.clientWidth;
   const speed = width / (2 * approachMs);
@@ -436,6 +454,10 @@ function render(snapshot) {
   boostFillPercent = snapshot.boost_fill_percent ?? boostFillPercent;
   boostDurationMs = snapshot.boost_duration_ms ?? boostDurationMs;
   boostMultiplier = snapshot.boost_multiplier ?? boostMultiplier;
+  rankingMax = snapshot.ranking_max ?? rankingMax;
+  starLowPercent = snapshot.star_low_percent ?? starLowPercent;
+  starHighPercent = snapshot.star_high_percent ?? starHighPercent;
+  starCloseMs = snapshot.star_close_ms ?? starCloseMs;
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
   const next = current || items.slice(0, 4).find(item => item.status === "ready");
@@ -451,6 +473,8 @@ function render(snapshot) {
   } else if (activeId && (!current || current.id !== activeId || !snapshot.invitation.accepted)) {
     stopPlayback();
   }
+  const leadScore = activeId && snapshot.scores?.find(score => score.singer_id === activeSingerId);
+  if (leadScore) activeScorePoints = leadScore.points;
 
   const status = document.querySelector("#next-status");
   status.textContent = current ? (current.status === "ready" ? "PRÓXIMA MÚSICA" : "PREPARANDO") :
@@ -521,8 +545,7 @@ function connect() {
         blockResults.set(message.block_index, message.result === "hit");
       }
       renderCaptionBar();
-      liveScore.textContent = `${message.name}: ${message.points.toFixed(1)} / ${message.ranking_max}`;
-      liveScore.hidden = false;
+      if (message.singer_id === activeSingerId) activeScorePoints = message.points;
       return;
     }
     if (message.type === "requests") render(message);
@@ -614,16 +637,28 @@ function stopNoiseHold() {
 
 window.addEventListener("blur", stopNoiseHold);
 
-video.addEventListener("ended", async () => {
-  if (!activeId || finishing) return;
-  finishing = true;
+video.addEventListener("ended", () => {
+  if (!activeId || finishing || scoreShow) return;
   const finishedId = activeId;
+  const points = Math.min(Math.max(activeScorePoints, 0), rankingMax);
+  resetBoost();
+  openScorePanel({
+    percent: points * 100 / rankingMax,
+    points,
+    videoSrc: video.currentSrc,
+    onClose: () => finishSong(finishedId),
+  });
+});
+
+async function finishSong(finishedId) {
+  if (finishing) return;
+  finishing = true;
   try {
     await command(`/api/tv/${encodeURIComponent(finishedId)}/finish`, {method:"POST"});
     if (activeId === finishedId) stopPlayback();
   } catch (problem) { error.textContent = problem.message; }
   finally { finishing = false; }
-});
+}
 video.addEventListener("timeupdate", renderCaptionBar);
 video.addEventListener("play", () => {
   if (captionFrame == null) captionFrame = requestAnimationFrame(animateCaptionBars);
@@ -705,6 +740,256 @@ async function resetParty() {
 
 document.querySelector("#color-action").addEventListener("click", cycleColor);
 document.querySelector("#reset-action").addEventListener("click", resetParty);
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function hexToRgb(hex) {
+  const value = parseInt(hex.slice(1), 16);
+  return [value >> 16 & 255, value >> 8 & 255, value & 255];
+}
+
+function mixColor(from, to, amount) {
+  const start = hexToRgb(from);
+  const end = hexToRgb(to);
+  const t = clamp(amount, 0, 1);
+  return `rgb(${start.map((channel, index) => Math.round(channel + (end[index] - channel) * t)).join(",")})`;
+}
+
+function starColorAt(percent) {
+  const low = clamp(starLowPercent, 0, 100);
+  const high = clamp(starHighPercent, low, 100);
+  if (percent < low) return mixColor(missColor, colors[colorIndex], percent / low);
+  if (percent < high) return mixColor(colors[colorIndex], hitColor, (percent - low) / (high - low));
+  return mixColor(hitColor, goldColor, high >= 100 ? 1 : (percent - high) / (100 - high));
+}
+
+function setStarProgress(percent, points) {
+  scoreStar.style.setProperty("--level", percent.toFixed(2));
+  scoreStar.style.setProperty("--fill-color", starColorAt(percent));
+  scoreValue.textContent = String(points);
+}
+
+function openScorePanel({ percent, points, videoSrc = "", onClose = null }) {
+  closeScorePanel();
+  const finalPercent = clamp(Number(percent) || 0, 0, 100);
+  const finalPoints = Math.floor(clamp(Number(points) || 0, 0, rankingMax));
+  const perfect = finalPercent >= 100;
+  const current = { timers: [], intervals: [], output: createAudioOutput(), onClose };
+  scoreShow = current;
+  const later = (callback, delay) => current.timers.push(setTimeout(callback, delay));
+
+  scorePanel.classList.remove("perfect");
+  scorePanel.classList.toggle("has-video", !!videoSrc);
+  scoreStreamers.replaceChildren();
+  setStarProgress(0, 0);
+  scorePanel.hidden = false;
+  if (videoSrc) {
+    scoreBackdrop.muted = true;
+    scoreBackdrop.src = videoSrc;
+    scoreBackdrop.play().catch(() => {});
+  }
+
+  const growMs = 2500 + 5500 * finalPercent / 100;
+  if (current.output) playDrumRoll(current.output, growMs / 1000);
+  const startedAt = performance.now();
+  const grow = setInterval(() => {
+    const progress = Math.min(1, (performance.now() - startedAt) / growMs);
+    const eased = 1 - (1 - progress) ** 3;
+    setStarProgress(finalPercent * eased, Math.floor(finalPoints * eased));
+    if (progress < 1) return;
+    clearInterval(grow);
+    celebrate();
+  }, 160);
+  current.intervals.push(grow);
+
+  function celebrate() {
+    let musicSeconds = perfect ? 15 : 5;
+    if (current.output) {
+      playCrash(current.output, current.output.context.currentTime + 0.02);
+      musicSeconds = perfect ? playPerfectSong(current.output) : playFanfare(current.output);
+    }
+    if (perfect) {
+      scorePanel.classList.add("perfect");
+      launchStreamers(70);
+      const confetti = setInterval(() => launchStreamers(5), 280);
+      current.intervals.push(confetti);
+      later(() => clearInterval(confetti), musicSeconds * 1000);
+    }
+    later(() => {
+      if (videoSrc) {
+        scoreBackdrop.currentTime = 0;
+        scoreBackdrop.volume = 0.5;
+        scoreBackdrop.muted = false;
+        scoreBackdrop.play().catch(() => {});
+      }
+      later(() => closeScorePanel(true), starCloseMs);
+    }, musicSeconds * 1000);
+  }
+}
+
+function closeScorePanel(completed = false) {
+  const current = scoreShow;
+  if (!current) return;
+  scoreShow = null;
+  current.timers.forEach(clearTimeout);
+  current.intervals.forEach(clearInterval);
+  current.output?.disconnect();
+  scoreBackdrop.pause();
+  scoreBackdrop.removeAttribute("src");
+  scoreBackdrop.load();
+  scoreStreamers.replaceChildren();
+  scorePanel.hidden = true;
+  scorePanel.classList.remove("perfect", "has-video");
+  if (completed) current.onClose?.();
+}
+
+function launchStreamers(count) {
+  const palette = [...starColors, ...colors, hitColor, missColor];
+  for (let index = 0; index < count; index += 1) {
+    const streamer = document.createElementNS(svgNamespace, "svg");
+    streamer.setAttribute("viewBox", "0 0 28 120");
+    streamer.classList.add("streamer");
+    streamer.style.left = `${Math.random() * 100}%`;
+    streamer.style.animationDelay = `${Math.random() * 0.6}s`;
+    streamer.style.setProperty("--streamer-color", palette[Math.floor(Math.random() * palette.length)]);
+    streamer.style.setProperty("--fall", `${2.8 + Math.random() * 2.4}s`);
+    streamer.style.setProperty("--drift", `${Math.round(Math.random() * 260 - 130)}px`);
+    streamer.style.setProperty("--spin-from", `${Math.round(Math.random() * 80 - 40)}deg`);
+    streamer.style.setProperty("--spin-to", `${Math.round(Math.random() * 720 - 360)}deg`);
+    const ribbon = document.createElementNS(svgNamespace, "path");
+    ribbon.setAttribute("d", "M14 4 C 26 16, 2 28, 14 40 S 2 64, 14 76 S 26 100, 14 116");
+    streamer.append(ribbon);
+    streamer.addEventListener("animationend", event => { if (event.target === streamer) streamer.remove(); });
+    scoreStreamers.append(streamer);
+  }
+  while (scoreStreamers.children.length > 160) scoreStreamers.firstElementChild.remove();
+}
+
+function createAudioOutput() {
+  try {
+    audioContext ??= new AudioContext();
+    audioContext.resume().catch(() => {});
+    const output = audioContext.createGain();
+    output.gain.value = 0.8;
+    output.connect(audioContext.destination);
+    return output;
+  } catch {
+    return null;
+  }
+}
+
+function noiseBuffer(context) {
+  if (noise?.sampleRate === context.sampleRate) return noise;
+  noise = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+  const data = noise.getChannelData(0);
+  for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1;
+  return noise;
+}
+
+function playNoise(output, when, length, level, filterType, frequency) {
+  const context = output.context;
+  const source = context.createBufferSource();
+  source.buffer = noiseBuffer(context);
+  const filter = context.createBiquadFilter();
+  filter.type = filterType;
+  filter.frequency.value = frequency;
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(level, when);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + length);
+  source.connect(filter).connect(gain).connect(output);
+  source.start(when, Math.random() * Math.max(0, 1.9 - length), length + 0.02);
+}
+
+function playKick(output, when) {
+  const context = output.context;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.frequency.setValueAtTime(150, when);
+  oscillator.frequency.exponentialRampToValueAtTime(40, when + 0.14);
+  gain.gain.setValueAtTime(0.7, when);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.2);
+  oscillator.connect(gain).connect(output);
+  oscillator.start(when);
+  oscillator.stop(when + 0.22);
+}
+
+function playTone(output, midi, when, length, type = "square", level = 0.07) {
+  const context = output.context;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.value = 440 * 2 ** ((midi - 69) / 12);
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.exponentialRampToValueAtTime(level, when + 0.015);
+  gain.gain.setValueAtTime(level, when + Math.max(0.03, length - 0.06));
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + length);
+  oscillator.connect(gain).connect(output);
+  oscillator.start(when);
+  oscillator.stop(when + length + 0.02);
+}
+
+function playDrumRoll(output, seconds) {
+  const start = output.context.currentTime + 0.02;
+  for (let offset = 0; offset < seconds; offset += 0.05) {
+    const level = (0.12 + 0.4 * offset / seconds) * (0.85 + Math.random() * 0.3);
+    playNoise(output, start + offset, 0.045, level, "bandpass", 1800);
+  }
+}
+
+function playCrash(output, when) {
+  playKick(output, when);
+  playNoise(output, when, 1.6, 0.45, "highpass", 5000);
+}
+
+function playFanfare(output) {
+  const beat = 0.4;
+  const start = output.context.currentTime + 0.05;
+  const melody = [[72, 0, .5], [76, .5, .5], [79, 1, .5], [84, 1.5, 1.5], [79, 3, .5], [84, 3.5, .5],
+    [88, 4, 2], [86, 6, .5], [88, 6.5, .5], [91, 7, 3]];
+  const bass = [[48, 0, 1.5], [55, 1.5, 1.5], [48, 3, 1], [53, 4, 2], [55, 6, 1], [48, 7, 3]];
+  for (const [note, at, length] of melody) playTone(output, note, start + at * beat, length * beat, "square", 0.06);
+  for (const [note, at, length] of bass) playTone(output, note, start + at * beat, length * beat, "triangle", 0.18);
+  for (const at of [0, 1.5, 3, 4, 6, 7]) playKick(output, start + at * beat);
+  playCrash(output, start + 7 * beat);
+  return 10 * beat + 0.4;
+}
+
+function playPerfectSong(output) {
+  const beat = 0.36;
+  const start = output.context.currentTime + 0.05;
+  const chords = [[60, 64, 67], [55, 59, 62], [57, 60, 64], [53, 57, 60]];
+  const hook = [[76, 0, 1], [79, 1, .5], [81, 1.5, .5], [79, 2, 1], [76, 3, 1],
+    [74, 4, 1], [79, 5, 1], [83, 6, 1], [81, 7, 1],
+    [81, 8, 1], [84, 9, .5], [83, 9.5, .5], [81, 10, 1], [79, 11, 1],
+    [77, 12, 1], [81, 13, 1], [79, 14, 2]];
+  for (let bar = 0; bar < 9; bar += 1) {
+    const chord = chords[bar % chords.length];
+    const barStart = start + bar * 4 * beat;
+    for (let step = 0; step < 8; step += 1) {
+      const when = barStart + step * beat / 2;
+      playTone(output, chord[[0, 1, 2, 1][step % 4]] + 12, when, beat / 2, "triangle", 0.05);
+      playNoise(output, when, 0.04, 0.08, "highpass", 7000);
+    }
+    for (let count = 0; count < 4; count += 1) {
+      const when = barStart + count * beat;
+      playTone(output, chord[0] - 12, when, beat * 0.9, "triangle", 0.2);
+      if (count % 2 === 0) playKick(output, when);
+      else playNoise(output, when, 0.14, 0.3, "bandpass", 1800);
+    }
+  }
+  for (let repeat = 0; repeat < 9 * 4; repeat += 16) {
+    for (const [note, at, length] of hook) {
+      if (repeat + at < 36) playTone(output, note, start + (repeat + at) * beat, length * beat, "square", 0.06);
+    }
+  }
+  const ending = start + 36 * beat;
+  for (const note of [60, 64, 67, 72, 76, 84]) playTone(output, note, ending, 3.5 * beat, "square", 0.045);
+  playTone(output, 36, ending, 3.5 * beat, "triangle", 0.22);
+  playCrash(output, ending);
+  return 40 * beat + 0.4;
+}
 
 setup().catch(problem => {
   setConnectionStatus("failed", "Falha na conexão");

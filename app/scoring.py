@@ -68,6 +68,18 @@ def boost_loudness_percent() -> int:
     return integer_setting("KARAOKE_BOOST_LOUDNESS_PERCENT", 40, 5, 500)
 
 
+def star_low_percent() -> int:
+    return integer_setting("KARAOKE_STAR_LOW_PERCENT", 25, 0, 100)
+
+
+def star_high_percent() -> int:
+    return integer_setting("KARAOKE_STAR_HIGH_PERCENT", 75, 0, 100)
+
+
+def star_close_ms() -> int:
+    return integer_setting("KARAOKE_STAR_CLOSE_MS", 30000, 0, 600000)
+
+
 def boost_multiplier() -> float:
     try:
         value = float(os.getenv("KARAOKE_BOOST_MULTIPLIER", "1.5"))

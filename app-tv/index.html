@@ -17,7 +17,6 @@
         <div id="video-overlay" hidden>
           <div id="boost-stars" class="boost-stars" aria-hidden="true"></div>
           <div class="track" id="track" aria-live="off" hidden><span id="vocal-marker" class="vocal-marker" aria-hidden="true"></span><div id="lyric-text"></div></div>
-          <div id="live-score" hidden></div>
           <button id="play" type="button" hidden>Reproduzir</button>
         </div>
         <div id="intermission">
@@ -53,6 +52,16 @@
           <span id="join-url">Conectando ao Wi-Fi</span>
         </aside>
       </footer>
+    </section>
+    <section id="score-panel" class="score-panel" aria-label="Pontuação final" hidden>
+      <video id="score-backdrop" class="score-backdrop" playsinline loop muted aria-hidden="true"></video>
+      <div id="score-star" class="score-star">
+        <span class="score-star-hole"></span>
+        <span class="score-star-fill"><span class="score-star-level"></span></span>
+        <svg class="score-star-outline" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,3 62,36 97,37 69,58 80,93 50,73 20,93 31,58 3,37 38,36"/></svg>
+        <strong id="score-value" class="score-value" aria-live="polite">0</strong>
+      </div>
+      <div id="score-streamers" class="score-streamers" aria-hidden="true"></div>
     </section>
   </main>
 </body>
