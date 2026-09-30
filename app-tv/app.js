@@ -28,6 +28,12 @@ let scoreBlockMs = 1000;
 let scoreLaneCount = 3;
 let offCuePenalty = 1;
 let offCueRearmMs = 500;
+let noisePercent = null;
+let noiseTimer = null;
+let noiseRequest = null;
+let noiseResetting = false;
+let noiseHoldTimer = null;
+let noiseHeldKey = null;
 let lastOffcuePenaltyAt = null;
 let hitBlocks = new Set();
 let blockResults = new Map();
@@ -286,8 +292,15 @@ function animateVocalMarker() {
 function render(snapshot) {
   if (party && party !== snapshot.party) stopPlayback();
   if (party !== snapshot.party) {
+    clearTimeout(noiseTimer);
+    noiseTimer = null;
+    noisePercent = null;
     party = snapshot.party;
     refreshJoin();
+  }
+  if (noiseTimer === null && noiseRequest === null) {
+    noisePercent = Math.round(snapshot.microphone_rms_threshold * 100);
+    updateNoiseLabel();
   }
   scoreToleranceMs = snapshot.score_tolerance_ms ?? scoreToleranceMs;
   scoreBlockMs = snapshot.score_block_ms ?? scoreBlockMs;
@@ -443,6 +456,47 @@ new MutationObserver(() => { playAction.disabled = playButton.hidden; })
   .observe(playButton, {attributes:true, attributeFilter:["hidden"]});
 playAction.addEventListener("click", () => playButton.click());
 
+function updateNoiseLabel() {
+  document.querySelector("#noise-label").textContent = `Ruído ${noisePercent}%`;
+}
+
+async function saveNoise() {
+  noiseTimer = null;
+  if (noiseRequest || noiseResetting) return;
+  const percent = noisePercent;
+  noiseRequest = command("/api/tv/noise", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({percent}),
+  });
+  try {
+    await noiseRequest;
+  } catch (problem) {
+    error.textContent = problem.message;
+    if (noisePercent === percent) noisePercent = null;
+  } finally {
+    noiseRequest = null;
+    if (noisePercent !== null && noisePercent !== percent && noiseTimer === null && !noiseResetting) saveNoise();
+  }
+}
+
+function adjustNoise(step) {
+  if (noisePercent === null || noiseResetting) return;
+  const next = Math.max(1, Math.min(50, noisePercent + step));
+  if (next === noisePercent) return;
+  noisePercent = next;
+  updateNoiseLabel();
+  clearTimeout(noiseTimer);
+  noiseTimer = setTimeout(saveNoise, 450);
+}
+
+function stopNoiseHold() {
+  clearInterval(noiseHoldTimer);
+  noiseHoldTimer = null;
+  noiseHeldKey = null;
+}
+
+window.addEventListener("blur", stopNoiseHold);
+
 video.addEventListener("ended", async () => {
   if (!activeId || finishing) return;
   finishing = true;
@@ -465,7 +519,16 @@ video.addEventListener("pause", () => {
 
 document.addEventListener("keydown", event => {
   if (show.hidden || event.target instanceof HTMLInputElement) return;
-  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "n") {
+  const noiseStep = ["+", "="].includes(event.key) ? 1 : ["-", "_"].includes(event.key) ? -1 : 0;
+  if (noiseStep && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    event.preventDefault();
+    if (noiseHeldKey !== event.code) {
+      stopNoiseHold();
+      noiseHeldKey = event.code;
+      adjustNoise(noiseStep);
+      noiseHoldTimer = setInterval(() => adjustNoise(noiseStep), 100);
+    }
+  } else if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "n") {
     event.preventDefault();
     resetParty();
   } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -477,6 +540,9 @@ document.addEventListener("keydown", event => {
     event.preventDefault();
     if (!playAction.disabled) playButton.click();
   }
+});
+document.addEventListener("keyup", event => {
+  if (event.code === noiseHeldKey) stopNoiseHold();
 });
 
 function moveTrack(direction) {
@@ -504,12 +570,18 @@ async function resetParty() {
     confirmLabel: "Iniciar nova festa",
   });
   if (!confirmed) return;
+  stopNoiseHold();
+  noiseResetting = true;
+  clearTimeout(noiseTimer);
+  noiseTimer = null;
   try {
+    if (noiseRequest) await noiseRequest.catch(() => {});
     await command("/api/tv/reset", {method:"POST"});
     stopPlayback();
     party = null;
     render(await command("/api/tv/state"));
   } catch (problem) { error.textContent = problem.message; }
+  finally { noiseResetting = false; }
 }
 
 document.querySelector("#color-action").addEventListener("click", cycleColor);

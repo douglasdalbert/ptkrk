@@ -44,6 +44,22 @@ class TvTests(unittest.TestCase):
                              "VALUES ('song', 'singer', 'glvVYIhdWlU', 'ready')")
             enqueue_request(database, "song")
 
+    def test_tv_adjusts_microphone_noise_for_singers_and_reset_restores_default(self):
+        with patch.dict("os.environ", {"KARAOKE_SCORE_RMS_THRESHOLD": "0.15"}):
+            self.assertEqual(self.client.get("/api/tv/state").json()["microphone_rms_threshold"], 0.15)
+            self.assertEqual(self.client.post("/api/tv/noise", json={"percent": 14}).status_code, 403)
+            response = self.client.post("/api/tv/noise", headers=self.tv_headers, json={"percent": 14})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["microphone_rms_threshold"], 0.14)
+            self.assertEqual(self.client.get("/api/tv/state").json()["microphone_rms_threshold"], 0.14)
+            self.assertEqual(main_module.party_snapshot()["microphone_rms_threshold"], 0.14)
+            for percent in (0, 51, 14.5):
+                self.assertEqual(self.client.post("/api/tv/noise", headers=self.tv_headers,
+                                                  json={"percent": percent}).status_code, 422)
+            self.assertEqual(self.client.get("/api/tv/state").json()["microphone_rms_threshold"], 0.14)
+            self.client.post("/api/tv/reset", headers=self.tv_headers)
+            self.assertEqual(self.client.get("/api/tv/state").json()["microphone_rms_threshold"], 0.15)
+
     def test_only_local_tv_can_start_and_serve_video(self):
         self.add_ready()
         with connection() as database:

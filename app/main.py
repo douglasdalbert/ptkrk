@@ -100,6 +100,10 @@ class NewRequest(BaseModel):
     youtubeCode: str = Field(min_length=11, max_length=11)
 
 
+class NoiseSetting(BaseModel):
+    percent: int = Field(ge=1, le=50)
+
+
 def authenticated_tv() -> None:
     if os.getenv("KARAOKE_TV_LOCAL") != "true":
         raise HTTPException(404, "TV indisponível")
@@ -164,6 +168,9 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         invitation = invitation_state(database)
         skipping = skip_state(database)
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        noise_setting = database.execute(
+            "SELECT value FROM runtime_state WHERE key = 'microphone_rms_threshold'"
+        ).fetchone()
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
         scores = []
         if invitation:
@@ -190,7 +197,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "score_lane_count": score_lane_count(),
                 "off_cue_penalty": off_cue_penalty(),
                 "off_cue_rearm_ms": off_cue_rearm_ms(),
-                "microphone_rms_threshold": microphone_rms_threshold(),
+                "microphone_rms_threshold": float(noise_setting["value"]) if noise_setting else microphone_rms_threshold(),
                 "microphone_silence_ms": microphone_silence_ms()}
     if include_caption_bars:
         snapshot["active_bars"] = active_bars
@@ -599,6 +606,18 @@ def tv_page(_: None = Depends(authenticated_tv)) -> FileResponse:
 @app.get("/api/tv/state", dependencies=[Depends(authenticated_tv)])
 def tv_state() -> dict:
     return party_snapshot()
+
+
+@app.post("/api/tv/noise", dependencies=[Depends(tv_command)])
+def tv_noise(setting: NoiseSetting) -> dict[str, float]:
+    threshold = setting.percent / 100
+    with connection() as database:
+        database.execute(
+            "INSERT INTO runtime_state(key, value) VALUES ('microphone_rms_threshold', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(threshold),),
+        )
+    return {"microphone_rms_threshold": threshold}
 
 
 @app.post("/api/tv/reset", dependencies=[Depends(tv_command)])
