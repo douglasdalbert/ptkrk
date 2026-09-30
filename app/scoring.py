@@ -91,18 +91,24 @@ def score_value(hits: int, penalties: int, total_blocks: int, ranking_max: int |
     if total_blocks <= 0:
         return 0.0
     ranking_max = max_score() if ranking_max is None else ranking_max
-    adjusted = max(0, min(total_blocks, hits - penalties * off_cue_penalty()))
-    return round(adjusted * ranking_max / total_blocks, 1)
+    earned_points = min(total_blocks, hits) * ranking_max / total_blocks
+    return round(max(0, earned_points - penalties * off_cue_penalty()), 1)
 
 
-def _score_units(score: sqlite3.Row, total_blocks: int) -> int:
+def _score_units(score: sqlite3.Row, total_blocks: int) -> float:
     units = score["score_units"]
     if units is None:
         units = len(json.loads(score["hit_blocks"])) - score["penalties"] * off_cue_penalty()
-    return max(0, min(total_blocks, units))
+    return max(0.0, min(float(total_blocks), float(units)))
 
 
-def _points_for_units(units: int, total_blocks: int, boosted_hits: int = 0) -> float:
+def _apply_off_cue_penalty(score_units: float, total_blocks: int) -> float:
+    current_points = _points_for_units(score_units, total_blocks)
+    remaining_points = max(0.0, current_points - off_cue_penalty())
+    return remaining_points * total_blocks / max_score()
+
+
+def _points_for_units(units: float, total_blocks: int, boosted_hits: int = 0) -> float:
     if total_blocks <= 0:
         return 0.0
     # Boost bonus is extra credit on top of the regular ranking, so it may exceed max_score().
@@ -161,7 +167,7 @@ def record_onset(
             event_type = "off_cue_repeat"
         else:
             penalties += 1
-            score_units = max(0, score_units - off_cue_penalty())
+            score_units = _apply_off_cue_penalty(score_units, total_blocks)
     else:
         if block_index not in hit_blocks:
             hit_blocks.add(block_index)
@@ -171,7 +177,7 @@ def record_onset(
         "WHERE request_id = ? AND singer_id = ?",
         (json.dumps(sorted(hit_blocks)), penalties, score_units, request_id, singer_id),
     )
-    points = score_value(len(hit_blocks), penalties, total_blocks)
+    points = _points_for_units(score_units, total_blocks)
     singer_name = database.execute("SELECT name FROM singers WHERE id = ?", (singer_id,)).fetchone()[0]
     return {
         "type": "score_update",
@@ -314,7 +320,7 @@ def record_offcue_penalty(
     penalties = score["penalties"] + (0 if previous_penalty else 1)
     score_units = _score_units(score, total_blocks)
     if not previous_penalty:
-        score_units = max(0, score_units - off_cue_penalty())
+        score_units = _apply_off_cue_penalty(score_units, total_blocks)
     database.execute(
         "UPDATE song_scores SET penalties = ?, score_units = ?, updated_at = CURRENT_TIMESTAMP "
         "WHERE request_id = ? AND singer_id = ?",

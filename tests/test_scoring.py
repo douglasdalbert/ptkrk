@@ -12,13 +12,14 @@ from app.storage import connection, initialize
 class ScoringTests(unittest.TestCase):
     def test_hit_and_penalty_normalization_matches_expected_example(self):
         with patch("app.scoring.off_cue_penalty", return_value=1):
-            self.assertEqual(score_value(90, 5, 100, ranking_max=1000), 850.0)
+            self.assertEqual(score_value(90, 5, 100, ranking_max=1000), 895.0)
             self.assertEqual(score_value(90, 0, 100, ranking_max=1000), 900.0)
 
     def test_score_is_clamped_and_reports_one_decimal(self):
         self.assertEqual(score_value(200, 0, 100, ranking_max=1000), 1000.0)
         self.assertEqual(score_value(1, 0, 3, ranking_max=1000), 333.3)
-        self.assertEqual(score_value(10, 20, 100, ranking_max=1000), 0.0)
+        self.assertEqual(score_value(0, 1, 100, ranking_max=1000), 0.0)
+        self.assertEqual(score_value(10, 20, 100, ranking_max=1000), 80.0)
 
     def test_score_configuration_is_environment_controlled(self):
         with patch.dict("os.environ", {
@@ -110,7 +111,7 @@ This is a phrase
                     result = score_snapshot(database, "song", sidecar)[0]
                     self.assertEqual(result["hits"], 1)
                     self.assertEqual(result["penalties"], 2)
-                    self.assertEqual(result["points"], 0.0)
+                    self.assertEqual(result["points"], 498.0)
 
     def test_offcue_speech_penalty_uses_configured_amount_and_rearm_window(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -129,15 +130,21 @@ This is a phrase
                     )
                     sidecar = Path(directory) / "captions.json"
                     sidecar.write_text(json.dumps({"duration_ms": 10000, "bars": [
-                        {"block_index": 0, "start_ms": 1000, "end_ms": 2000},
+                        {"block_index": index, "start_ms": index * 1000, "end_ms": index * 1000 + 900}
+                        for index in range(286)
                     ]}), encoding="utf-8")
+                    database.execute(
+                        "INSERT INTO song_scores(request_id, singer_id, score_units) VALUES ('song', 'singer', 201)"
+                    )
+                    before = round(201 * 1000 / 286, 1)
                     first = record_offcue_penalty(database, "song", "singer", "off-1", 3000, sidecar)
                     repeated = record_offcue_penalty(database, "song", "singer", "off-2", 3200, sidecar)
                     before_rearm = record_offcue_penalty(database, "song", "singer", "off-3", 3499, sidecar)
                     after_rearm = record_offcue_penalty(database, "song", "singer", "off-4", 3500, sidecar)
                     self.assertEqual(first["penalties"], 1)
                     self.assertEqual(first["penalty_value"], 2)
-                    self.assertEqual(first["points"], 0.0)
+                    self.assertEqual(first["points"], round(before - 2, 1))
+                    self.assertAlmostEqual(before - first["points"], 2.0)
                     self.assertEqual(repeated["result"], "off_cue_repeat")
                     self.assertEqual(repeated["penalties"], 1)
                     self.assertEqual(before_rearm["penalties"], 1)
@@ -174,9 +181,9 @@ This is a phrase
                     after_hit_penalty = record_offcue_penalty(
                         database, "song", "singer", "off-3", 7000, sidecar
                     )
-                    self.assertEqual(after_hit_penalty["points"], 0.0)
+                    self.assertEqual(after_hit_penalty["points"], 499.0)
                     second_hit = record_onset(database, "song", "singer", "hit-2", 5000, sidecar)
-                    self.assertEqual(second_hit["points"], 500.0)
+                    self.assertEqual(second_hit["points"], 999.0)
                     self.assertGreaterEqual(
                         database.execute(
                             "SELECT score_units FROM song_scores WHERE request_id = 'song'"
