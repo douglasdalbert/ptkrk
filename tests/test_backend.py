@@ -82,7 +82,7 @@ class WorkerTests(unittest.TestCase):
         with patch("app.worker.MEDIA_ROOT", media_root):
             self.assertEqual(outdated_ready_captions(set()), ("dQw4w9WgXcQ", generation))
             self.assertIsNone(outdated_ready_captions({(generation, "dQw4w9WgXcQ")}))
-            captions.write_text(json.dumps({"version": 7}), encoding="utf-8")
+            captions.write_text(json.dumps({"version": 8}), encoding="utf-8")
             self.assertIsNone(outdated_ready_captions(set()))
 
     def test_failure_marks_request_failed(self):

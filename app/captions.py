@@ -7,7 +7,7 @@ from pathlib import Path
 from yt_dlp import YoutubeDL
 
 from app.media import MEDIA_ROOT
-from app.scoring import block_duration_ms, caption_history_ms, onset_tolerance_ms as configured_onset_tolerance_ms
+from app.scoring import block_duration_ms, caption_history_ms, caption_repeat_percent, onset_tolerance_ms as configured_onset_tolerance_ms
 
 TIMESTAMP = re.compile(
     r"(?P<start>\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+"
@@ -19,7 +19,7 @@ INLINE_TIMESTAMP = re.compile(r"<(?P<time>\d{2}:\d{2}:\d{2}\.\d{3})>")
 BRACKETED_TEXT = re.compile(r"\[[^\]\r\n]*\]")
 DECORATION = re.compile(r"[\s♪♫♬♩]+")
 SPEAKER_MARKER = re.compile(r"(^|\n)[^\S\r\n]*>>[^\S\r\n]*")
-CAPTION_VERSION = 7
+CAPTION_VERSION = 8
 
 
 def normalized_words(text: str) -> list[str]:
@@ -29,6 +29,19 @@ def normalized_words(text: str) -> list[str]:
 def contains_phrase(haystack: list[str], phrase: list[str]) -> bool:
     return any(haystack[index:index + len(phrase)] == phrase
                for index in range(len(haystack) - len(phrase) + 1))
+
+
+def mostly_repeated(haystack: list[str], candidate: list[str], repeat_percent: int) -> bool:
+    previous_lengths = [0] * (len(haystack) + 1)
+    for word in candidate:
+        lengths = [0] * (len(haystack) + 1)
+        for index, old_word in enumerate(haystack, start=1):
+            if word == old_word:
+                lengths[index] = previous_lengths[index - 1] + 1
+                if lengths[index] * 100 > repeat_percent * len(candidate):
+                    return True
+        previous_lengths = lengths
+    return False
 
 
 def new_caption_text(previous: str, current: str) -> str:
@@ -80,10 +93,12 @@ def parse_vtt_caption_bars(
     onset_tolerance_ms: int | None = None,
     max_block_ms: int | None = None,
     history_ms: int | None = None,
+    repeat_percent: int | None = None,
 ) -> dict:
     onset_tolerance_ms = configured_onset_tolerance_ms() if onset_tolerance_ms is None else onset_tolerance_ms
     max_block_ms = block_duration_ms() if max_block_ms is None else max_block_ms
     history_ms = caption_history_ms() if history_ms is None else history_ms
+    repeat_percent = caption_repeat_percent() if repeat_percent is None else repeat_percent
     cues = []
     source_cues = 0
     bracketed_annotations = 0
@@ -120,12 +135,16 @@ def parse_vtt_caption_bars(
             has_words = True
             history = [entry for entry in history if fragment_start - entry[0] <= history_ms]
             candidate = normalized_words(caption)
+            fresh = new_caption_text(previous_text, caption) if fragment_start - previous_start <= max_block_ms else caption
             if len(candidate) >= 3 and (
                 contains_phrase(normalized_words(" ".join(entry[1] for entry in history)), candidate)
                 or contains_phrase(normalized_words(" ".join(entry[2] for entry in history)), candidate)
+                or (fresh == caption and (
+                    mostly_repeated(normalized_words(" ".join(entry[1] for entry in history)), candidate, repeat_percent)
+                    or mostly_repeated(normalized_words(" ".join(entry[2] for entry in history)), candidate, repeat_percent)
+                ))
             ):
                 continue
-            fresh = new_caption_text(previous_text, caption) if fragment_start - previous_start <= max_block_ms else caption
             if fresh:
                 if events and events[-1][0] == fragment_start:
                     previous_start_ms, previous_end_ms, previous_fragment = events[-1]
@@ -162,6 +181,7 @@ def parse_vtt_caption_bars(
         "scoring_rule": "hit_caption_onset_within_tolerance_awards_full_caption_duration",
         "max_block_ms": max_block_ms,
         "history_ms": history_ms,
+        "repeat_percent": repeat_percent,
     }
 
 
@@ -180,6 +200,7 @@ def create_caption_bars(
     onset_tolerance_ms = configured_onset_tolerance_ms() if onset_tolerance_ms is None else onset_tolerance_ms
     max_block_ms = block_duration_ms() if max_block_ms is None else max_block_ms
     history_ms = caption_history_ms()
+    repeat_percent = caption_repeat_percent()
     root = MEDIA_ROOT / generation
     output = root / "captions" / f"{video_id}.json"
     if output.is_file():
@@ -189,6 +210,7 @@ def create_caption_bars(
                     and cached.get("onset_tolerance_ms") == onset_tolerance_ms
                     and cached.get("max_block_ms") == max_block_ms
                     and cached.get("history_ms") == history_ms
+                    and cached.get("repeat_percent") == repeat_percent
                     and isinstance(cached.get("bars"), list)):
                 return cached
         except (OSError, json.JSONDecodeError):
@@ -220,7 +242,8 @@ def create_caption_bars(
             raise ValueError(f"Legenda automática {language} indisponível")
         duration_ms = round(float(metadata.get("duration") or 0) * 1000)
         parsed = parse_vtt_caption_bars(
-            caption_path.read_text(encoding="utf-8"), duration_ms, onset_tolerance_ms, max_block_ms, history_ms
+            caption_path.read_text(encoding="utf-8"), duration_ms, onset_tolerance_ms, max_block_ms,
+            history_ms, repeat_percent
         )
 
     result = {
@@ -231,6 +254,7 @@ def create_caption_bars(
         "onset_tolerance_ms": onset_tolerance_ms,
         "max_block_ms": max_block_ms,
         "history_ms": history_ms,
+        "repeat_percent": repeat_percent,
         "timing_method": "native_vtt_segments_with_rolling_overlap_removed",
         **parsed,
     }

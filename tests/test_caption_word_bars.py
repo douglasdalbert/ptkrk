@@ -151,6 +151,32 @@ amanhã eu irei
             (61800, "amanhã eu irei"),
         ])
 
+    def test_near_duplicate_cue_after_timed_words_is_discarded(self):
+        vtt = """WEBVTT
+
+00:02:44.400 --> 00:02:46.361
+quero<00:02:44.800><c> você</c><00:02:45.239><c> e</c><00:02:45.440><c> não</c><00:02:45.640><c> vão</c><00:02:45.959><c> querer</c>
+
+00:02:46.361 --> 00:02:46.371
+Eu só quero você e não vão querer
+"""
+        bars = parse_vtt_caption_bars(vtt, 170000, max_block_ms=3000, repeat_percent=70)["bars"]
+        self.assertEqual([bar["text"] for bar in bars], ["quero", "você", "e", "não", "vão", "querer"])
+
+    def test_repeat_threshold_is_strict_and_configurable(self):
+        vtt = """WEBVTT
+
+00:00:01.000 --> 00:00:02.000
+a b c d e f g
+
+00:00:02.000 --> 00:00:03.000
+x y z a b c d e f g
+"""
+        default = parse_vtt_caption_bars(vtt, 4000, repeat_percent=70)["bars"]
+        lower = parse_vtt_caption_bars(vtt, 4000, repeat_percent=69)["bars"]
+        self.assertEqual([bar["text"] for bar in default], ["a b c d e f g", "x y z a b c d e f g"])
+        self.assertEqual([bar["text"] for bar in lower], ["a b c d e f g"])
+
 
 if __name__ == "__main__":
     unittest.main()
