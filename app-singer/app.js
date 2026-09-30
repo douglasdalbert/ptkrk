@@ -76,6 +76,7 @@ const loudnessWindowMs = 250;
 const loudnessBaselineWindows = 20;
 const loudnessSurgeFrames = 12;
 const boostRequestCooldownMs = 3000;
+const errorTimers = new WeakMap();
 
 function stopMicrophone() {
   if (microphoneFrame !== null) cancelAnimationFrame(microphoneFrame);
@@ -101,13 +102,25 @@ function connectionState(text, state = "connecting") {
 }
 
 function showError(element, message) {
+  clearTimeout(errorTimers.get(element));
   element.textContent = message;
   element.classList.add("error");
   element.setAttribute("role", "alert");
   element.hidden = false;
+  const timer = setTimeout(() => {
+    if (errorTimers.get(element) !== timer || !element.classList.contains("error") || element.textContent !== message) return;
+    errorTimers.delete(element);
+    element.textContent = "";
+    element.classList.remove("error");
+    element.setAttribute("role", "status");
+    element.hidden = true;
+  }, 10000);
+  errorTimers.set(element, timer);
 }
 
 function clearError(element) {
+  clearTimeout(errorTimers.get(element));
+  errorTimers.delete(element);
   element.classList.remove("error");
   element.setAttribute("role", "status");
 }
