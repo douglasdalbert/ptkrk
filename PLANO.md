@@ -1,6 +1,6 @@
 # Karaokê em rede local
 
-Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias e legendas nativas divididas em blocos, `app-singer` com captura de microfone e `app-tv` com blocos letrados móveis, sincronismo e placar ao vivo; a precisão real ainda precisa ser conferida em `1pLrF_rGLyg` com microfone/aparelho. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
+Documento vivo de requisitos e progresso. Estado atual: API, worker de download/prévias e legendas nativas divididas em blocos, `app-singer` com captura de microfone e `app-tv` com blocos letrados móveis, sincronismo e placar ao vivo; canto em celular real e acionamento do bônus de energia confirmados, mas precisão e eco ainda precisam de calibração. O repositório já está ligado ao Git; não criar branch nem commit automaticamente.
 
 ## Objetivo
 
@@ -84,12 +84,12 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Adicionar worker independente de download com `yt-dlp` e FFmpeg, limite de 12 minutos/500 MB e testes sem mídia real.
 - [x] Gerar prévia JPEG com FFmpeg antes de marcar pedido como pronto; entregar prévia via API autenticada e testar com vídeo sintético.
 - [x] Testar download real de um vídeo público do YouTube (`VV1XWJN3nJo`): MP4 local com resposta parcial `206` e prévia JPEG `200` na TV.
-- [ ] Testar extração/análise vocal e acesso pelo QR em um celular físico na LAN. Um vídeo público funcionar não garante suporte a todos.
+- [x] Testar captura/análise vocal e acesso pelo QR em um celular físico na LAN. Um vídeo público funcionar não garante suporte a todos.
 - [x] Implementar `app-singer` inicial: entrada por nome, sessão persistida, pedidos pelo celular e layout compacto.
 - [x] Recuperar identidade, pedidos e contagens ao entrar de novo com o mesmo nome; consolidar perfis duplicados antigos e renovar o token de sessão.
 - [x] Fixar barra de ação de 48px no rodapé do `app-singer`: pulo como botão e aceite exclusivo quando for a vez do cantor; conteúdo restante rolável.
 - [x] Detectar automaticamente IP Wi-Fi no host pelo `start.ps1`; exibir QR/URL de acesso ao cantor no canto inferior direito da TV, sem dados da festa. Teste do PNG concluído.
-- [x] Invalidar sessões antigas no reset sem mudar a URL/QR; `POST /api/singers` retorna o novo `party`, e respostas da API e WebSocket permitem detectar troca de festa. Falta testar leitura do QR por um celular real na TV.
+- [x] Invalidar sessões antigas no reset sem mudar a URL/QR; `POST /api/singers` retorna o novo `party`, e respostas da API e WebSocket permitem detectar troca de festa. Leitura do QR em celular real validada.
 - [x] Exibir no celular os estados de download e prévias já disponíveis na API; confirmar push em navegador sem polling dos celulares.
 - [x] Adicionar WebSocket autenticado para publicar alterações de pedidos; observador único do SQLite no servidor enquanto o worker é outro processo.
 - [x] Posicionar pedidos desde a entrada, intercalar cantores e proteger as duas primeiras posições; testar A/B/C e selecionar a primeira pronta do pódio sem reordená-lo.
@@ -101,21 +101,23 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 - [x] Permitir remover um pedido próprio não aceito após `ConfirmDialog` reutilizável com título e prévia opcional; cancelar conserva o pedido, confirmar compacta a fila e impede ressurgimento ao terminar download.
 - [x] Ativar convites com a TV local conectada, reproduzir MP4 após aceite e avançar ao fim ou ao concluir pulo; validar que a porta LAN não expõe controle da TV e testar streaming parcial.
 - [x] Implementar `app-tv` com vídeo sem corte (`contain`) no palco máximo e rodapé fixo: até quatro próximos, ações roláveis clicáveis com atalhos, QR/URL à direita, conexão flutuante e confirmação para nova festa.
-- [ ] Testar com vídeo real e celulares na LAN: autoplay, áudio, reconexão da TV durante vídeo e leitura do QR a distância.
+- [ ] Testar com vídeo real e celulares na LAN: autoplay, áudio e reconexão da TV durante vídeo; conferir leitura do QR a distância.
 - [x] Implementar `Ctrl+Alt+N` somente no `app-tv`: nova geração, limpeza do SQLite/mídia e invalidação das sessões, mantendo o mesmo endereço no QR; teste isolado do endpoint concluído.
-- [ ] Testar reset durante vídeo, aceite e download em celulares reais, incluindo cliente offline e repetição do atalho.
+- [x] Manter o reset como está; não está previsto resetar a festa durante vídeo, aceite ou download no beta.
 - [ ] Testar reinício, reconexão e múltiplos celulares.
 
 ### 2. Sincronismo e placar
 
-- [ ] Validar visualmente se a legenda de `1pLrF_rGLyg` acompanha suficientemente o início e fim do canto; cue de legenda é aproximação, não alinhamento fonético.
-- [x] Servir `app-singer` por HTTPS/WSS com certificado `mkcert` para o IP Wi-Fi; falta instalar/confiar na CA e validar o microfone em cada celular.
+- [x] Validar visualmente se a legenda de `1pLrF_rGLyg` acompanha suficientemente o início e fim do canto; cue de legenda é aproximação, não alinhamento fonético.
+- [x] Servir `app-singer` por HTTPS/WSS com certificado `mkcert` para o IP Wi-Fi; canto e acionamento do bônus de energia confirmados em um celular real. Ainda é preciso validar a CA e o microfone nos demais aparelhos.
 - [ ] Calibrar limiar de RMS, latência/eco e testar pausas, buffering, seek e perda de pacotes em `1pLrF_rGLyg`.
 - [x] Implementar captura de onset, blocos de legenda, penalidade off-cue e ranking configurável; falta validação humana/aparelho real e persistência de recordes de longo prazo.
 
 ### 3. Evolução
 
-- [ ] Testar separação vocal/modelos melhores se análise simples for insuficiente.
+- [ ] Investigar fontes de legendas melhores para músicas, como alternativa às legendas nativas do YouTube; avaliar sincronismo, disponibilidade e condições de uso antes de integrar.
+- [ ] Em caso de falha no preparo de um vídeo, exibir o erro ao cantor e oferecer "Tentar novamente" ou "Desistir"; manter o pedido até que ele decida.
+- [ ] Criar modal de busca de vídeos do YouTube com campo de pesquisa, lista de resultados e botão "Selecionar" para adicionar o vídeo à lista de cantos do cantor.
 - [ ] Implementar bônus de intensidade, duração e teto após validação real.
 - [ ] Definir recuperação de identidade, limpeza de cache e avisos em segundo plano.
 - [ ] Revisar resiliência do downloader a mudanças do YouTube e estratégias de cache/limpeza.
@@ -123,8 +125,7 @@ Um PC Windows com Docker Desktop hospeda uma aplicação web acessível a celula
 ## Perguntas pendentes
 
 1. Verificar condições de download, armazenamento e exibição dos vídeos públicos efetivamente usados nesta festa.
-2. Podemos testar um celular cantando perto da TV (com e sem fones) e qual é o hardware do host?
-3. A primeira entrega pode ser a festa com fila/vídeo, deixando pontuação automática para a etapa seguinte?
+2. A primeira entrega pode ser a festa com fila/vídeo, deixando pontuação automática para a etapa seguinte?
 
 ## Execução atual
 
