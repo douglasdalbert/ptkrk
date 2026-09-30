@@ -27,6 +27,7 @@ services:
     volumes:
       - db_data:/data
       - media_data:/media
+      - ./.certs:/certs:ro
     command:
       [
         "uvicorn",
@@ -35,6 +36,10 @@ services:
         "0.0.0.0",
         "--port",
         "8000",
+        "--ssl-certfile",
+        "/certs/singer.pem",
+        "--ssl-keyfile",
+        "/certs/singer-key.pem",
         "--reload",
         "--reload-dir",
         "/srv/app",
@@ -62,7 +67,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+          "import ssl, urllib.request; urllib.request.urlopen('https://127.0.0.1:8000/health', context=ssl._create_unverified_context(), timeout=3)",
         ]
       interval: 30s
       timeout: 5s

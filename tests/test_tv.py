@@ -183,7 +183,7 @@ class TvTests(unittest.TestCase):
         self.add_ready()
         old = self.client.get("/api/tv/state").json()["party"]
         self.assertEqual(self.client.get("/api/tv/join").json()["url"],
-                         "http://192.168.68.108:8000/cantor")
+                         "https://192.168.68.108:8000/cantor")
         old_qr = self.client.get("/api/tv/qr").content
         self.assertTrue(old_qr.startswith(b"\x89PNG"))
         previous_singer = self.client.post("/api/singers", json={"name": "Old"})
@@ -209,7 +209,7 @@ class TvTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/requests", headers={
             "Authorization": f"Bearer {response.json()['token']}"
         }).headers["X-Karaoke-Party"], new)
-        self.assertEqual(self.client.get("/api/tv/join").json()["url"], "http://192.168.68.108:8000/cantor")
+        self.assertEqual(self.client.get("/api/tv/join").json()["url"], "https://192.168.68.108:8000/cantor")
         self.assertEqual(self.client.get("/api/tv/qr").content, old_qr)
 
     def test_reentering_same_name_restores_existing_request_list(self):

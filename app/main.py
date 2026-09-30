@@ -730,7 +730,7 @@ def singer_address(request: Request) -> str:
     address = os.getenv("KARAOKE_LAN_IP", "")
     if not address:
         raise HTTPException(503, "Inicie com start.ps1 para detectar o IP da rede")
-    return f"http://{address}:8000/cantor"
+    return f"https://{address}:8000/cantor"
 
 
 @app.get("/api/tv/join", dependencies=[Depends(authenticated_tv)])
