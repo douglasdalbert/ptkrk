@@ -52,6 +52,14 @@ button:disabled { opacity: .55; cursor: wait; }
 .group-dialog #group-message:empty { display: none; }
 .group-dialog #group-message { margin: 10px 0 0; font-size: 12px; }
 .skip-button { background: var(--panel); color: var(--pink); }
+.skip-action { display: flex; gap: 6px; }
+.skip-action .footer-button { flex: 1; min-width: 0; }
+.boost-button { background: var(--panel); color: var(--pink); }
+.boost-button:disabled { opacity: .55; }
+.boost-button[data-ready="true"] { background: linear-gradient(90deg, #ff2bd6, #7a5cff, #00e5ff, #39ff88, #fff34d, #ff2bd6); background-size: 300% 100%; color: #120818; text-shadow: 0 0 6px #fff; animation: energy-flow 1.2s linear infinite, energy-glow 1.2s ease-in-out infinite alternate; }
+@keyframes energy-flow { to { background-position: -300% 0; } }
+@keyframes energy-glow { from { box-shadow: 0 0 10px #ff2bd6, inset 0 0 8px #fff8; } to { box-shadow: 0 0 22px #00e5ff, inset 0 0 14px #fffc; } }
+@media (prefers-reduced-motion: reduce) { .boost-button[data-ready="true"] { animation: none; } }
 .wordmark { display: flex; min-width: 0; align-items: center; gap: 5px; font-weight: 900; font-size: 16px; white-space: nowrap; }
 .wordmark-title { flex: none; }
 .wordmark-sub { min-width: 0; overflow: hidden; color: var(--muted); font-size: 13px; font-weight: 700; text-overflow: ellipsis; }
@@ -108,7 +116,6 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .singing-overlay #score-status { max-width: min(420px, 92vw); margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .singing-overlay #microphone-button { width: min(320px, 88vw); }
 .microphone-waveform { display: block; width: min(320px, 88vw); height: 48px; }
-.boost-test-button { position: absolute; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); min-height: 40px; padding: 0 16px; border: 1px dashed var(--pink); border-radius: 3px; background: transparent; color: var(--pink); font-size: 13px; }
 @keyframes singing-pulse { 50% { transform: scale(1.05); box-shadow: 0 0 58px #c7fa4552; } }
 .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .scores div { display: grid; gap: 5px; }

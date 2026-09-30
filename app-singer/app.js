@@ -19,7 +19,7 @@ const confirmDialog = new ConfirmDialog();
 const skippingView = document.querySelector("#skipping");
 const singingOverlay = document.querySelector("#singing-overlay");
 const microphoneButton = document.querySelector("#microphone-button");
-const boostTestButton = document.querySelector("#boost-test-button");
+const boostButton = document.querySelector("#boost-button");
 const microphoneWaveform = document.querySelector("#microphone-waveform");
 const microphonePermissionButton = document.querySelector("#microphone-permission-button");
 const microphonePermissionStatus = document.querySelector("#microphone-permission-status");
@@ -292,7 +292,6 @@ function connect() {
       microphoneSilenceMs = message.microphone_silence_ms ?? 300;
       boostLoudnessPercent = message.boost_loudness_percent ?? boostLoudnessPercent;
       boostActive = !!message.boost_active;
-      boostTestButton.hidden = !message.dev_tools;
       if (message.invitation?.request_id !== scoredRequestId) {
         scoredRequestId = message.invitation?.request_id || null;
       }
@@ -670,7 +669,16 @@ function sendBoostRequest(requestId) {
   socket.send(JSON.stringify({ type: "boost_request", request_id: requestId, event_id: crypto.randomUUID() }));
 }
 
-boostTestButton.addEventListener("click", () => sendBoostRequest(currentInvitation?.request_id));
+boostButton.addEventListener("click", () => {
+  if (!currentSong) return;
+  sendBoostRequest(currentSong.id);
+  const skipMessage = document.querySelector("#skip-message");
+  clearError(skipMessage);
+  skipMessage.textContent = "Energia doada!";
+  setTimeout(() => {
+    if (skipMessage.textContent.startsWith("Energia doada")) skipMessage.textContent = "";
+  }, 3000);
+});
 
 function sampleMicrophone() {
   if (!microphoneAnalyser || !microphoneStream) return;
@@ -920,6 +928,12 @@ function renderSkip(message) {
   currentSkip = message.skip;
   currentSong = message.items.find((item) => item.id === message.invitation?.request_id) || null;
   allowSkip = message.allow_skip;
+  const participant = currentSong && singer && (currentSong.singer_id === singer.singer_id ||
+    currentSong.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
+  boostButton.hidden = !message.invitation?.accepted || !currentSong || !!participant || !!currentSkip;
+  const boostReady = !!message.boost_ready && !message.boost_active;
+  boostButton.disabled = !boostReady;
+  boostButton.dataset.ready = String(boostReady);
   skippingView.hidden = !currentSkip;
   skipButton.disabled = !!currentSkip;
   if (currentInvitation && !currentInvitation.accepted) acceptButton.disabled = !!currentSkip;
@@ -934,7 +948,8 @@ function renderSkip(message) {
 
 function updateFooter() {
   const showingInvitation = !invitationView.hidden;
-  skipAction.hidden = showingInvitation || !currentSong || !allowSkip;
+  skipButton.hidden = !allowSkip;
+  skipAction.hidden = showingInvitation || !currentSong || (skipButton.hidden && boostButton.hidden);
   actionFooter.hidden = !singer || (!showingInvitation && skipAction.hidden && skippingView.hidden);
 }
 

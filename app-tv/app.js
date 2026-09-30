@@ -12,7 +12,6 @@ const lyricText = document.querySelector("#lyric-text");
 const liveScore = document.querySelector("#live-score");
 const boostBar = document.querySelector("#boost-bar");
 const boostLabel = document.querySelector("#boost-label");
-const boostBonuses = document.querySelector("#boost-bonuses");
 const boostStars = document.querySelector("#boost-stars");
 const starColors = ["#ff2bd6", "#00e5ff", "#39ff88", "#fff34d", "#b58cff"];
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -93,21 +92,31 @@ function updateBoostBar() {
     boostCharge >= 1 ? "Barra cheia · cante mais alto!" : `Energia ${Math.floor(boostCharge * 100)}%`;
 }
 
+function sendBoostState() {
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({
+    type: "boost_state", request_id: activeId, active: boostRemainingMs > 0,
+    ready: boostRemainingMs <= 0 && boostCharge >= 1,
+  }));
+}
+
 function resetBoost() {
+  const wasShared = boostRemainingMs > 0 || boostCharge >= 1;
   boostCharge = 0;
   boostRemainingMs = 0;
   boostFrameAt = null;
   boostedBlocks = new Set();
   show.classList.remove("boost-active");
   boostBar.classList.remove("just-filled");
-  boostBonuses.replaceChildren();
   boostStars.replaceChildren();
   updateBoostBar();
+  if (wasShared) sendBoostState();
 }
 
 function creditBoostHit(blockIndex) {
   if (boostRemainingMs > 0) {
     boostedBlocks.add(blockIndex);
+    spawnBoostStar();
     return;
   }
   if (boostCharge >= 1 || !captionBars.length) return;
@@ -117,6 +126,7 @@ function creditBoostHit(blockIndex) {
     boostBar.classList.remove("just-filled");
     void boostBar.offsetWidth;
     boostBar.classList.add("just-filled");
+    sendBoostState();
   }
   updateBoostBar();
 }
@@ -131,6 +141,7 @@ function startBoost() {
   boostFrameAt = video.paused ? null : performance.now();
   show.classList.add("boost-active");
   updateBoostBar();
+  sendBoostState();
 }
 
 function endBoost() {
@@ -139,6 +150,7 @@ function endBoost() {
   boostFrameAt = null;
   show.classList.remove("boost-active");
   updateBoostBar();
+  sendBoostState();
 }
 
 function tickBoost() {
@@ -153,18 +165,6 @@ function tickBoost() {
     updateBoostBar();
   }
   boostFrameAt = video.paused || video.ended ? null : now;
-}
-
-function showBoostBonus(bonusPoints) {
-  const bonus = document.createElement("span");
-  bonus.className = "boost-bonus";
-  bonus.textContent = `×${formatNumber(boostMultiplier)} `;
-  const extra = document.createElement("b");
-  extra.textContent = `+${formatNumber(bonusPoints)}`;
-  bonus.append(extra);
-  bonus.addEventListener("animationend", () => bonus.remove(), { once: true });
-  boostBonuses.prepend(bonus);
-  while (boostBonuses.children.length > 4) boostBonuses.lastElementChild.remove();
 }
 
 function spawnBoostStar() {
@@ -494,7 +494,10 @@ function connect() {
   const current = new WebSocket(`${protocol}//${location.host}/ws/requests`);
   let failed = false;
   socket = current;
-  current.onopen = () => current.send(JSON.stringify({token: ""}));
+  current.onopen = () => {
+    current.send(JSON.stringify({token: ""}));
+    sendBoostState();
+  };
   current.onmessage = event => {
     failed = false;
     setConnectionStatus("connected", "Conectado");
@@ -513,10 +516,6 @@ function connect() {
     }
     if (message.type === "score_update") {
       if (message.request_id !== activeId) return;
-      if (message.boosted && message.bonus_points > 0) {
-        showBoostBonus(message.bonus_points);
-        spawnBoostStar();
-      }
       if (message.result === "hit" && message.block_index != null) hitBlocks.add(message.block_index);
       if (message.block_index != null && ["hit", "miss"].includes(message.result)) {
         blockResults.set(message.block_index, message.result === "hit");

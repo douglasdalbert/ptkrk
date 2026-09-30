@@ -181,6 +181,8 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         boost_state = json.loads(boost_setting["value"]) if boost_setting else None
         boost_active = bool(invitation and boost_state and boost_state.get("active")
                             and boost_state.get("request_id") == invitation["request_id"])
+        boost_ready = bool(invitation and boost_state and boost_state.get("ready")
+                           and boost_state.get("request_id") == invitation["request_id"])
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
         scores = []
         if invitation:
@@ -214,7 +216,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "boost_multiplier": boost_multiplier(),
                 "boost_loudness_percent": boost_loudness_percent(),
                 "boost_active": boost_active,
-                "dev_tools": os.getenv("NODE_ENV", "production").strip().lower() != "production"}
+                "boost_ready": boost_ready}
     if include_caption_bars:
         snapshot["active_bars"] = active_bars
     return snapshot
@@ -401,13 +403,15 @@ async def requests_socket(websocket: WebSocket) -> None:
             if is_tv and message.get("type") == "boost_state":
                 request_id = message.get("request_id")
                 active = message.get("active")
-                if (request_id is not None and not isinstance(request_id, str)) or not isinstance(active, bool):
+                ready = message.get("ready", False)
+                if ((request_id is not None and not isinstance(request_id, str)) or not isinstance(active, bool)
+                        or not isinstance(ready, bool)):
                     continue
                 with connection() as database:
                     database.execute(
                         "INSERT INTO runtime_state(key, value) VALUES ('boost_state', ?) "
                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                        (json.dumps({"request_id": request_id, "active": active}),),
+                        (json.dumps({"request_id": request_id, "active": active, "ready": ready}),),
                     )
                 continue
             if is_tv and message.get("type") == "block_result":
@@ -503,21 +507,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     invitation = invitation_state(database)
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
-                    owner = database.execute(
-                        "SELECT singer_id FROM requests WHERE id = ?", (request_id,)
-                    ).fetchone()
-                    if owner is None:
-                        continue
-                    singer_id = singer_socket_ids.get(websocket)
-                    eligible = owner["singer_id"] == singer_id and invitation["lead_accepted"]
-                    if not eligible:
-                        eligible = database.execute(
-                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
-                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1",
-                            (request_id, singer_id),
-                        ).fetchone() is not None
-                    if not eligible:
-                        continue
+                singer_id = singer_socket_ids.get(websocket)
                 add_tv_notification(f"boost:{event_id}", request_id, {
                     "type": "boost_request", "request_id": request_id, "singer_id": singer_id,
                 })
