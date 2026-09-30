@@ -76,6 +76,10 @@ def star_high_percent() -> int:
     return integer_setting("KARAOKE_STAR_HIGH_PERCENT", 75, 0, 100)
 
 
+def star_nice_percent() -> int:
+    return integer_setting("KARAOKE_STAR_NICE_PERCENT", 91, 0, 100)
+
+
 def star_close_ms() -> int:
     return integer_setting("KARAOKE_STAR_CLOSE_MS", 30000, 0, 600000)
 

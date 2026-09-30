@@ -69,6 +69,7 @@ let rankingMax = 1000;
 let activeScorePoints = 0;
 let starLowPercent = 25;
 let starHighPercent = 75;
+let starNicePercent = 91;
 let starCloseMs = 30000;
 let scoreShow = null;
 let audioContext = null;
@@ -457,6 +458,7 @@ function render(snapshot) {
   rankingMax = snapshot.ranking_max ?? rankingMax;
   starLowPercent = snapshot.star_low_percent ?? starLowPercent;
   starHighPercent = snapshot.star_high_percent ?? starHighPercent;
+  starNicePercent = snapshot.star_nice_percent ?? starNicePercent;
   starCloseMs = snapshot.star_close_ms ?? starCloseMs;
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
@@ -775,7 +777,7 @@ function openScorePanel({ percent, points, videoSrc = "", onClose = null }) {
   closeScorePanel();
   const finalPercent = clamp(Number(percent) || 0, 0, 100);
   const finalPoints = Math.floor(clamp(Number(points) || 0, 0, rankingMax));
-  const perfect = finalPercent >= 100;
+  const perfect = finalPercent >= starNicePercent;
   const current = { timers: [], intervals: [], output: createAudioOutput(), onClose };
   scoreShow = current;
   const later = (callback, delay) => current.timers.push(setTimeout(callback, delay));

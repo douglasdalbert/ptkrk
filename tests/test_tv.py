@@ -60,6 +60,10 @@ class TvTests(unittest.TestCase):
             self.client.post("/api/tv/reset", headers=self.tv_headers)
             self.assertEqual(self.client.get("/api/tv/state").json()["microphone_rms_threshold"], 0.15)
 
+    def test_tv_state_exposes_configured_nice_star_threshold(self):
+        with patch.dict("os.environ", {"KARAOKE_STAR_NICE_PERCENT": "83"}):
+            self.assertEqual(self.client.get("/api/tv/state").json()["star_nice_percent"], 83)
+
     def test_only_local_tv_can_start_and_serve_video(self):
         self.add_ready()
         with connection() as database:
