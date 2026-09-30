@@ -133,5 +133,8 @@ button { cursor:pointer; }
 .score-streamers { position:absolute; z-index:3; inset:0; overflow:hidden; pointer-events:none; }
 .streamer { position:absolute; top:-22vh; width:clamp(18px,2.4vmin,34px); height:clamp(80px,14vmin,160px); overflow:visible; animation:streamer-fall var(--fall) linear forwards; }
 .streamer path { fill:none; stroke:var(--streamer-color); stroke-width:5; stroke-linecap:round; transform-origin:center; animation:streamer-flutter .45s ease-in-out infinite alternate; }
+.celebration-star { position:absolute; z-index:4; width:var(--star-size); height:var(--star-size); overflow:visible; opacity:0; filter:drop-shadow(0 0 5px var(--star-color)) drop-shadow(0 0 14px var(--star-color)); animation:celebration-star-pop 1.8s cubic-bezier(.2,.8,.3,1) forwards; }
+.celebration-star polygon { fill:var(--star-color); stroke:#fff; stroke-width:5; stroke-linejoin:round; paint-order:stroke; }
+@keyframes celebration-star-pop { 0% { transform:translate(-50%,-50%) scale(0) rotate(calc(var(--star-turn) - 45deg)); opacity:0; } 18% { transform:translate(-50%,-50%) scale(1.2) rotate(var(--star-turn)); opacity:1; } 65% { transform:translate(-50%,-50%) scale(1) rotate(var(--star-turn)); opacity:1; } 100% { transform:translate(-50%,-70%) scale(.35) rotate(calc(var(--star-turn) + 35deg)); opacity:0; } }
 @keyframes streamer-fall { from { transform:translate3d(0,0,0) rotate(var(--spin-from)); } to { transform:translate3d(var(--drift),135vh,0) rotate(var(--spin-to)); } }
 @keyframes streamer-flutter { to { transform:scaleX(-1); } }

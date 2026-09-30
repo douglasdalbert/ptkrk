@@ -808,14 +808,19 @@ function openScorePanel({ percent, points, videoSrc = "", onClose = null }) {
 
   function celebrate() {
     let musicSeconds = perfect ? 15 : 5;
+    const streamerMultiplier = finalPercent >= 100 ? 3 : 1;
     if (current.output) {
       playCrash(current.output, current.output.context.currentTime + 0.02);
       musicSeconds = perfect ? playPerfectSong(current.output) : playFanfare(current.output);
     }
     if (perfect) {
       scorePanel.classList.add("perfect");
-      launchStreamers(70);
-      const confetti = setInterval(() => launchStreamers(5), 280);
+      launchStreamers(70 * streamerMultiplier);
+      if (finalPercent >= 100) launchCelebrationStars(18);
+      const confetti = setInterval(() => {
+        launchStreamers(5 * streamerMultiplier);
+        if (finalPercent >= 100) launchCelebrationStars(3);
+      }, 280);
       current.intervals.push(confetti);
       later(() => clearInterval(confetti), musicSeconds * 1000);
     }
@@ -866,7 +871,27 @@ function launchStreamers(count) {
     streamer.addEventListener("animationend", event => { if (event.target === streamer) streamer.remove(); });
     scoreStreamers.append(streamer);
   }
-  while (scoreStreamers.children.length > 160) scoreStreamers.firstElementChild.remove();
+  while (scoreStreamers.children.length > 480) scoreStreamers.firstElementChild.remove();
+}
+
+function launchCelebrationStars(count) {
+  const palette = [...starColors, "#fff", "#ffe94d"];
+  for (let index = 0; index < count; index += 1) {
+    const star = document.createElementNS(svgNamespace, "svg");
+    star.setAttribute("viewBox", "0 0 100 100");
+    star.classList.add("celebration-star");
+    star.style.left = `${Math.random() * 100}%`;
+    star.style.top = `${Math.random() * 100}%`;
+    star.style.setProperty("--star-color", palette[Math.floor(Math.random() * palette.length)]);
+    star.style.setProperty("--star-size", `${22 + Math.random() * 36}px`);
+    star.style.setProperty("--star-turn", `${Math.round(Math.random() * 100 - 50)}deg`);
+    star.style.animationDelay = `${Math.random() * 0.45}s`;
+    const shape = document.createElementNS(svgNamespace, "polygon");
+    shape.setAttribute("points", "50,2 61,36 98,38 69,59 80,96 50,75 20,96 31,59 2,38 39,36");
+    star.append(shape);
+    star.addEventListener("animationend", () => star.remove(), { once: true });
+    scoreStreamers.append(star);
+  }
 }
 
 function createAudioOutput() {
