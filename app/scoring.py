@@ -24,6 +24,10 @@ def block_duration_ms() -> int:
     return integer_setting("KARAOKE_SCORE_BLOCK_MS", 1000, 100, 5000)
 
 
+def score_lane_count() -> int:
+    return integer_setting("KARAOKE_SCORE_LANES", 3, 1, 10)
+
+
 def caption_history_ms() -> int:
     return integer_setting("KARAOKE_CAPTION_HISTORY_MS", 60000, 1000, 600000)
 
@@ -203,6 +207,70 @@ def record_block_result(
         "result": event_type,
         "hits": len(hit_blocks),
         "penalties": score["penalties"],
+        "total_blocks": total_blocks,
+        "points": points,
+        "percent": round(points * 100 / max_score(), 1),
+        "ranking_max": max_score(),
+    }
+
+
+def record_offcue_penalty(
+    database: sqlite3.Connection,
+    request_id: str,
+    singer_id: str,
+    event_id: str,
+    position_ms: int,
+    caption_path: Path,
+) -> dict | None:
+    if not caption_path.is_file():
+        return None
+    try:
+        captions = json.loads(caption_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    total_blocks = len(captions.get("bars", []))
+    if total_blocks == 0 or not 0 <= position_ms <= captions.get("duration_ms", 0):
+        return None
+
+    previous_penalty = database.execute(
+        "SELECT 1 FROM score_events WHERE request_id = ? AND singer_id = ? "
+        "AND event_type = 'off_cue_live' AND offcue_window > ? AND offcue_window <= ? LIMIT 1",
+        (request_id, singer_id, position_ms - off_cue_rearm_ms(), position_ms),
+    ).fetchone()
+    event_type = "off_cue_live_repeat" if previous_penalty else "off_cue_live"
+    inserted = database.execute(
+        "INSERT OR IGNORE INTO score_events(event_id, request_id, singer_id, event_type, offcue_window) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (event_id, request_id, singer_id, event_type, position_ms),
+    )
+    if not inserted.rowcount:
+        return None
+    database.execute(
+        "INSERT OR IGNORE INTO song_scores(request_id, singer_id) VALUES (?, ?)",
+        (request_id, singer_id),
+    )
+    score = database.execute(
+        "SELECT hit_blocks, penalties FROM song_scores WHERE request_id = ? AND singer_id = ?",
+        (request_id, singer_id),
+    ).fetchone()
+    penalties = score["penalties"] + (0 if previous_penalty else 1)
+    database.execute(
+        "UPDATE song_scores SET penalties = ?, updated_at = CURRENT_TIMESTAMP "
+        "WHERE request_id = ? AND singer_id = ?",
+        (penalties, request_id, singer_id),
+    )
+    points = score_value(len(json.loads(score["hit_blocks"])), penalties, total_blocks)
+    singer_name = database.execute("SELECT name FROM singers WHERE id = ?", (singer_id,)).fetchone()[0]
+    return {
+        "type": "score_update",
+        "request_id": request_id,
+        "singer_id": singer_id,
+        "name": singer_name,
+        "block_index": None,
+        "result": "off_cue" if not previous_penalty else "off_cue_repeat",
+        "hits": len(json.loads(score["hit_blocks"])),
+        "penalties": penalties,
+        "penalty_value": off_cue_penalty(),
         "total_blocks": total_blocks,
         "points": points,
         "percent": round(points * 100 / max_score(), 1),

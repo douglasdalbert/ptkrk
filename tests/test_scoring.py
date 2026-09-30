@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.captions import parse_vtt_caption_bars
-from app.scoring import block_duration_ms, matching_block, max_score, microphone_rms_threshold, onset_tolerance_ms, record_onset, score_snapshot, score_value
+from app.scoring import block_duration_ms, matching_block, max_score, microphone_rms_threshold, onset_tolerance_ms, record_offcue_penalty, record_onset, score_lane_count, score_snapshot, score_value
 from app.storage import connection, initialize
 
 
@@ -24,11 +24,13 @@ class ScoringTests(unittest.TestCase):
         with patch.dict("os.environ", {
             "KARAOKE_SCORE_MAX": "2000",
             "KARAOKE_SCORE_BLOCK_MS": "750",
+            "KARAOKE_SCORE_LANES": "4",
             "KARAOKE_SCORE_TOLERANCE_MS": "100",
             "KARAOKE_SCORE_RMS_THRESHOLD": "0.08",
         }):
             self.assertEqual(max_score(), 2000)
             self.assertEqual(block_duration_ms(), 750)
+            self.assertEqual(score_lane_count(), 4)
             self.assertEqual(onset_tolerance_ms(), 100)
             self.assertEqual(microphone_rms_threshold(), 0.08)
             result = parse_vtt_caption_bars(
@@ -41,6 +43,14 @@ This is a phrase
             )
             self.assertEqual([bar["score_duration_ms"] for bar in result["bars"]], [750])
             self.assertEqual(result["bars"][0]["score_window_end_ms"], 100)
+
+    def test_score_lane_count_defaults_to_three_and_is_bounded(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(score_lane_count(), 3)
+        with patch.dict("os.environ", {"KARAOKE_SCORE_LANES": "0"}):
+            self.assertEqual(score_lane_count(), 1)
+        with patch.dict("os.environ", {"KARAOKE_SCORE_LANES": "99"}):
+            self.assertEqual(score_lane_count(), 10)
 
     def test_match_requires_onset_window_not_caption_duration(self):
         bars = [
@@ -99,6 +109,37 @@ This is a phrase
                     self.assertEqual(result["hits"], 1)
                     self.assertEqual(result["penalties"], 2)
                     self.assertEqual(result["points"], 0.0)
+
+    def test_offcue_speech_penalty_uses_configured_amount_and_rearm_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "karaoke.sqlite3"
+            with patch("app.storage.DATABASE_PATH", database_path), patch.dict(
+                "os.environ", {"KARAOKE_SCORE_OFF_CUE_PENALTY": "2", "KARAOKE_SCORE_OFF_CUE_REARM_MS": "500"}
+            ):
+                initialize()
+                with connection() as database:
+                    database.execute(
+                        "INSERT INTO singers(id,name,session_hash) VALUES ('singer','Cantor','hash')"
+                    )
+                    database.execute(
+                        "INSERT INTO requests(id,singer_id,video_id,status) "
+                        "VALUES ('song','singer','abcdefghijk','ready')"
+                    )
+                    sidecar = Path(directory) / "captions.json"
+                    sidecar.write_text(json.dumps({"duration_ms": 10000, "bars": [
+                        {"block_index": 0, "start_ms": 1000, "end_ms": 2000},
+                    ]}), encoding="utf-8")
+                    first = record_offcue_penalty(database, "song", "singer", "off-1", 3000, sidecar)
+                    repeated = record_offcue_penalty(database, "song", "singer", "off-2", 3200, sidecar)
+                    before_rearm = record_offcue_penalty(database, "song", "singer", "off-3", 3499, sidecar)
+                    after_rearm = record_offcue_penalty(database, "song", "singer", "off-4", 3500, sidecar)
+                    self.assertEqual(first["penalties"], 1)
+                    self.assertEqual(first["penalty_value"], 2)
+                    self.assertEqual(first["points"], 0.0)
+                    self.assertEqual(repeated["result"], "off_cue_repeat")
+                    self.assertEqual(repeated["penalties"], 1)
+                    self.assertEqual(before_rearm["penalties"], 1)
+                    self.assertEqual(after_rearm["penalties"], 2)
 
 
 if __name__ == "__main__":

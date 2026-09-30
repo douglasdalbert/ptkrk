@@ -24,13 +24,20 @@ let party = null;
 let activeSingerId = null;
 let captionBars = [];
 let scoreToleranceMs = 100;
+let scoreBlockMs = 1000;
+let scoreLaneCount = 3;
+let offCuePenalty = 1;
+let offCueRearmMs = 500;
+let lastOffcuePenaltyAt = null;
 let hitBlocks = new Set();
 let blockResults = new Map();
 let sentBlockResults = new Set();
+let sentOffcuePenalties = new Set();
 let microphoneStateEvents = [];
 let captionFrame = null;
 const visibleBlocks = new Map();
 const approachMs = 3000;
+const laneResetPauseMs = 5000;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
 const confirmDialog = new ConfirmDialog();
 
@@ -71,6 +78,8 @@ function stopPlayback() {
   hitBlocks = new Set();
   blockResults = new Map();
   sentBlockResults = new Set();
+  sentOffcuePenalties = new Set();
+  lastOffcuePenaltyAt = null;
   microphoneStateEvents = [];
   visibleBlocks.clear();
   playButton.hidden = true;
@@ -83,6 +92,8 @@ async function startPlayback(item) {
   hitBlocks = new Set();
   blockResults = new Map();
   sentBlockResults = new Set();
+  sentOffcuePenalties = new Set();
+  lastOffcuePenaltyAt = null;
   microphoneStateEvents = [];
   visibleBlocks.clear();
   lyricTrack.hidden = false;
@@ -147,6 +158,7 @@ function renderCaptionBar() {
   const width = overlay.clientWidth;
   const speed = width / (2 * approachMs);
   const visible = new Set();
+  evaluateOffCueSpeech(time);
   captionBars.forEach((bar, index) => {
     const blockIndex = bar.block_index ?? index;
     if (!blockResults.has(blockIndex) && time >= bar.start_ms + scoreToleranceMs + 350) {
@@ -188,14 +200,14 @@ function renderCaptionBar() {
       block = document.createElement("span");
       block.className = "lyric-block";
       block.textContent = bar.text;
-      block.style.setProperty("--lane", index % 3);
+      block.style.setProperty("--lane", laneForBlock(index));
       block.style.setProperty("--block-color", colors[colorIndex]);
       lyricText.append(block);
       visibleBlocks.set(index, block);
     }
     block.dataset.result = hitBlocks.has(blockIndex) ? "hit" :
       blockResults.has(blockIndex) ? (blockResults.get(blockIndex) ? "hit" : "miss") :
-      time > (bar.score_window_end_ms ?? bar.end_ms) ? "miss" : "waiting";
+    time >= bar.start_ms ? "waiting" : "approaching";
     block.style.transform = `translate3d(${left}px, 0, 0)`;
   });
   for (const [index, block] of visibleBlocks) {
@@ -205,6 +217,56 @@ function renderCaptionBar() {
     }
   }
   lyricTrack.hidden = !visible.size && !activeId;
+}
+
+function laneForBlock(index) {
+  let lane = 0;
+  for (let current = 1; current <= index; current += 1) {
+    const gap = captionBars[current].start_ms - captionBars[current - 1].start_ms;
+    lane = gap > scoreBlockMs + laneResetPauseMs ? 0 : (lane + 1) % scoreLaneCount;
+  }
+  return lane;
+}
+
+function showOffcuePenalty(positionMs) {
+  const penalty = document.createElement("span");
+  penalty.className = "lyric-block offcue-penalty";
+  penalty.dataset.result = "miss";
+  penalty.textContent = `-${offCuePenalty} ponto${offCuePenalty === 1 ? "" : "s"}`;
+  penalty.style.setProperty("--lane", "0");
+  lyricText.append(penalty);
+  console.log("[app-tv] Penalidade off-cue", {
+    request_id: activeId,
+    position_ms: positionMs,
+    penalty: `-${offCuePenalty} ponto${offCuePenalty === 1 ? "" : "s"}`,
+  });
+  setTimeout(() => penalty.remove(), 1400);
+}
+
+function evaluateOffCueSpeech(currentPositionMs) {
+  if (!activeSingerId || !captionBars.length || socket?.readyState !== WebSocket.OPEN) return;
+  const timeline = microphoneStateEvents
+    .filter(activity => activity.singer_id === activeSingerId && Number.isInteger(activity.state_since_ms))
+    .sort((left, right) => left.state_since_ms - right.state_since_ms);
+  const latestState = timeline.filter(activity => activity.state_since_ms <= currentPositionMs).at(-1);
+  if (!latestState?.speaking) return;
+  const insideBlockWindow = captionBars.some(bar =>
+    currentPositionMs >= Math.max(0, bar.start_ms - scoreToleranceMs) &&
+    currentPositionMs <= bar.start_ms + scoreBlockMs);
+  if (insideBlockWindow || (lastOffcuePenaltyAt !== null &&
+      currentPositionMs - lastOffcuePenaltyAt < offCueRearmMs)) return;
+
+  const penaltyPositionMs = Math.round(currentPositionMs);
+  socket.send(JSON.stringify({
+    type: "offcue_penalty",
+    request_id: activeId,
+    event_id: crypto.randomUUID(),
+    singer_id: activeSingerId,
+    position_ms: penaltyPositionMs,
+  }));
+  sentOffcuePenalties.add(penaltyPositionMs);
+  lastOffcuePenaltyAt = currentPositionMs;
+  showOffcuePenalty(penaltyPositionMs);
 }
 
 function animateCaptionBars() {
@@ -228,6 +290,10 @@ function render(snapshot) {
     refreshJoin();
   }
   scoreToleranceMs = snapshot.score_tolerance_ms ?? scoreToleranceMs;
+  scoreBlockMs = snapshot.score_block_ms ?? scoreBlockMs;
+  scoreLaneCount = snapshot.score_lane_count ?? scoreLaneCount;
+  offCuePenalty = snapshot.off_cue_penalty ?? offCuePenalty;
+  offCueRearmMs = snapshot.off_cue_rearm_ms ?? offCueRearmMs;
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
   const next = current || items.slice(0, 4).find(item => item.status === "ready");
@@ -321,7 +387,7 @@ function connect() {
       console.log("[app-tv] Resultado vocal recebido", {
         request_id: message.request_id,
         singer: message.name,
-        block_index: message.block_index,
+          block_index: message.block_index,
         result: message.result,
       });
       renderCaptionBar();

@@ -601,7 +601,6 @@ function sampleMicrophone() {
   if (!microphoneAnalyser || !microphoneStream) return;
   const samples = new Float32Array(microphoneAnalyser.fftSize);
   microphoneAnalyser.getFloatTimeDomainData(samples);
-  drawMicrophoneWaveform(samples);
   let squareSum = 0;
   for (const sample of samples) squareSum += sample * sample;
   const rms = Math.sqrt(squareSum / samples.length);
@@ -632,6 +631,7 @@ function sampleMicrophone() {
       }
     }
   }
+  drawMicrophoneWaveform(rms >= microphoneRmsThreshold && microphoneSpeaking ? samples : null);
   microphoneFrame = requestAnimationFrame(sampleMicrophone);
 }
 

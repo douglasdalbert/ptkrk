@@ -96,7 +96,9 @@ class TvTests(unittest.TestCase):
         ]}), encoding="utf-8")
 
         with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "true"}):
-            with self.client.websocket_connect("/ws/requests") as tv_socket:
+            with self.client.websocket_connect("/ws/requests", headers={
+                "Origin": "http://localhost:8001", "Host": "localhost:8001"
+            }) as tv_socket:
                 tv_socket.send_json({"token": ""})
                 tv_socket.receive_json()
                 with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
@@ -144,13 +146,22 @@ class TvTests(unittest.TestCase):
                         miss = tv_socket.receive_json()
                         self.assertEqual((miss["type"], miss["result"], miss["block_index"]),
                                          ("score_update", "miss", 1))
+                        tv_socket.send_json({
+                            "type": "offcue_penalty", "request_id": "score-song",
+                            "event_id": "test-offcue-penalty", "singer_id": identity["singer_id"],
+                            "position_ms": 3000,
+                        })
+                        penalty = tv_socket.receive_json()
+                        self.assertEqual((penalty["type"], penalty["result"]),
+                                         ("score_update", "off_cue"))
+                        self.assertEqual(penalty["penalty_value"], 1)
 
         with connection() as database:
             row = database.execute(
                 "SELECT hit_blocks,penalties FROM song_scores WHERE request_id='score-song'"
             ).fetchone()
         self.assertEqual(json.loads(row["hit_blocks"]), [0])
-        self.assertEqual(row["penalties"], 0)
+        self.assertEqual(row["penalties"], 1)
 
     def test_reset_keeps_join_url_but_invalidates_sessions_and_media(self):
         self.add_ready()

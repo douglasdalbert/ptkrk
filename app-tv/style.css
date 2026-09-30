@@ -23,6 +23,9 @@ button { cursor:pointer; }
 .lyric-block { position:absolute; left:0; top:calc(4% + (var(--lane) * 32%)); display:block; max-width:min(40vw,520px); padding:7px 12px; border:1px solid #ffffff9c; border-radius:4px; background:var(--block-color); color:#101619; font-size:clamp(16px,2vw,30px); font-weight:800; line-height:1.1; overflow-wrap:anywhere; box-shadow:0 2px 12px #000b; will-change:transform; }
 .lyric-block[data-result="hit"] { background:#5ac8e4; border-color:#d4f7ff; }
 .lyric-block[data-result="miss"] { background:#f47783; border-color:#ffd7db; }
+.lyric-block[data-result="waiting"] { animation: pending-score 520ms ease-in-out infinite alternate; }
+.lyric-block.offcue-penalty { left:50%; z-index:4; transform:translateX(-50%); background:#f47783; border-color:#ffd7db; color:#241013; }
+@keyframes pending-score { from { background:#5ac8e4; border-color:#d4f7ff; } to { background:#f47783; border-color:#ffd7db; } }
 #live-score { position:absolute; z-index:3; top:12px; left:50%; transform:translateX(-50%); padding:8px 14px; border:1px solid var(--lime); background:#090d0dd9; color:var(--lime); font-size:clamp(14px,1.8vw,24px); font-weight:800; }
 #play { pointer-events:auto; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:18px; }
 #intermission { position:absolute; inset:0; display:block; padding:0; background:radial-gradient(ellipse at 8% 100%,#254c422e,transparent 60%),var(--ink); }

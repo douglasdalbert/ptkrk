@@ -19,12 +19,16 @@ import qrcode
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
 from app.scoring import (
+    block_duration_ms,
     max_score,
     microphone_rms_threshold,
+    off_cue_penalty,
     off_cue_rearm_ms,
     onset_tolerance_ms,
     record_block_result,
+    record_offcue_penalty,
     record_onset,
+    score_lane_count,
     score_snapshot,
 )
 from app.media import MEDIA_ROOT, remove_unused_media
@@ -181,6 +185,9 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
                 "scores": scores, "ranking_max": max_score(),
                 "score_tolerance_ms": onset_tolerance_ms(),
+                "score_block_ms": block_duration_ms(),
+                "score_lane_count": score_lane_count(),
+                "off_cue_penalty": off_cue_penalty(),
                 "off_cue_rearm_ms": off_cue_rearm_ms(),
                 "microphone_rms_threshold": microphone_rms_threshold()}
     if include_caption_bars:
@@ -403,6 +410,48 @@ async def requests_socket(websocket: WebSocket) -> None:
                     )
                 if update:
                     await websocket.send_json(update)
+                continue
+            if is_tv and message.get("type") == "offcue_penalty":
+                request_id = message.get("request_id")
+                singer_id = message.get("singer_id")
+                event_id = message.get("event_id")
+                position_ms = message.get("position_ms")
+                if (not isinstance(request_id, str) or not isinstance(singer_id, str)
+                        or not isinstance(event_id, str) or len(event_id) > 80
+                        or not isinstance(position_ms, int) or isinstance(position_ms, bool)
+                        or not 0 <= position_ms <= 12 * 60 * 1000):
+                    continue
+                with connection() as database:
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    owner = database.execute(
+                        "SELECT singer_id, video_id FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    if owner is None:
+                        continue
+                    eligible = owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = database.execute(
+                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
+                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1",
+                            (request_id, singer_id),
+                        ).fetchone() is not None
+                    if not eligible:
+                        continue
+                    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+                    caption_path = MEDIA_ROOT / generation / "captions" / f"{owner['video_id']}.json"
+                    database.execute("BEGIN IMMEDIATE")
+                    update = record_offcue_penalty(
+                        database, request_id, singer_id, event_id, position_ms, caption_path
+                    )
+                if update:
+                    await websocket.send_json(update)
+                    for subscriber in tuple(subscribers - {websocket}):
+                        try:
+                            await subscriber.send_json(update)
+                        except (WebSocketDisconnect, RuntimeError, OSError):
+                            subscribers.discard(subscriber)
                 continue
             if is_tv:
                 continue
