@@ -5,7 +5,13 @@ const entry = document.querySelector("#entry");
 const sessionView = document.querySelector("#session");
 const connectionLabel = document.querySelector("#connection");
 const entryForm = document.querySelector("#entry-form");
-const requestForm = document.querySelector("#request-form");
+const searchDialog = document.querySelector("#search-dialog");
+const searchForm = document.querySelector("#search-form");
+const playerDialog = document.querySelector("#player-dialog");
+const playerStage = document.querySelector("#player-stage");
+const playerFrame = document.querySelector("#player-frame");
+const sendingVideos = new Map();
+let searchGeneration = 0;
 const requestList = document.querySelector("#request-list");
 const previewCache = new Map();
 const acknowledgedFailures = new Set();
@@ -126,32 +132,18 @@ function clearError(element) {
   element.setAttribute("role", "status");
 }
 
-function youtubeCode(input) {
-  const value = input.trim();
-  if (/^[A-Za-z0-9_-]{11}$/.test(value)) return value;
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("Informe um link ou código válido do YouTube.");
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) {
-    throw new Error("Informe um link HTTPS do YouTube.");
-  }
-  let code = "";
-  if (["youtube.com", "www.youtube.com", "m.youtube.com"].includes(url.hostname) && url.pathname === "/watch") {
-    const values = url.searchParams.getAll("v");
-    if (values.length === 1) code = values[0];
-  } else if (url.hostname === "youtu.be" && /^\/[A-Za-z0-9_-]{11}$/.test(url.pathname)) {
-    code = url.pathname.slice(1);
-  }
-  if (!/^[A-Za-z0-9_-]{11}$/.test(code)) throw new Error("Informe um link ou código válido do YouTube.");
-  return code;
-}
-
 function clearSession() {
   if (confirmDialog.dialog.open) confirmDialog.dialog.close();
   if (groupDialog.open) groupDialog.close();
+  if (playerDialog.open) playerDialog.close();
+  if (searchDialog.open) searchDialog.close();
+  searchGeneration += 1;
+  sendingVideos.clear();
+  for (const kind of ["captioned", "karaoke"]) {
+    document.querySelector(`#${kind}-results`).replaceChildren();
+    document.querySelector(`#${kind}-status`).textContent = "";
+  }
+  searchForm.reset();
   singer = null;
   currentParty = null;
   currentInvitation = null;
@@ -317,6 +309,7 @@ function connect() {
       }
       promptGroupInvite(message.invitation, message.items);
       renderRequests(message.items);
+      renderSearchButtons();
       showFailedRequest(message.items);
     }
   });
@@ -1080,26 +1073,175 @@ entryForm.addEventListener("submit", async (event) => {
   }
 });
 
-requestForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = requestForm.querySelector("button");
-  const message = document.querySelector("#request-message");
-  button.disabled = true;
-  clearError(message);
-  message.textContent = "Enviando…";
+function formatDuration(seconds) {
+  if (!seconds) return "";
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function myRequestFor(videoId) {
+  const mine = latestItems.filter(item => item.video_id === videoId && !acknowledgedFailures.has(item.id) &&
+    (item.singer_id === singer?.singer_id ||
+      item.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.joined === 1)));
+  return mine.find(item => item.status !== "failed") || mine[0] || null;
+}
+
+function renderSearchButton(button) {
+  const videoId = button.dataset.videoId;
+  const sentId = sendingVideos.get(videoId);
+  if (sentId && latestItems.some(item => item.id === sentId)) sendingVideos.delete(videoId);
+  const request = myRequestFor(videoId);
+  const state = sendingVideos.has(videoId) ? "sending" : request?.status || "idle";
+  const labels = {
+    idle: ["+", "Adicionar"],
+    sending: ["", "Enviando"],
+    pending: ["○", "Em fila"],
+    processing: ["", "Processando"],
+    ready: ["✓", "Pronto"],
+    failed: ["\u26A0\uFE0E", "Tentar de novo"],
+  };
+  const [icon, text] = labels[state] || labels.idle;
+  button.dataset.state = state;
+  button.disabled = !["idle", "failed"].includes(state);
+  const iconElement = document.createElement("span");
+  iconElement.className = "state-icon";
+  iconElement.setAttribute("aria-hidden", "true");
+  iconElement.textContent = icon;
+  const textElement = document.createElement("span");
+  textElement.textContent = text;
+  button.replaceChildren(iconElement, textElement);
+  button.setAttribute("aria-label", `${text}: ${button.dataset.title}`);
+}
+
+function renderSearchButtons() {
+  if (!searchDialog.open) return;
+  searchDialog.querySelectorAll(".search-select").forEach(renderSearchButton);
+}
+
+async function selectVideo(video, status) {
+  if (sendingVideos.has(video.video_id)) return;
+  sendingVideos.set(video.video_id, null);
+  renderSearchButtons();
+  clearError(status);
   try {
-    const code = youtubeCode(requestForm.elements.video.value);
-    await api("/api/requests", {
-      method: "POST",
-      body: JSON.stringify({ youtubeCode: code }),
-    });
-    requestForm.reset();
-    message.textContent = "Pedido recebido.";
+    const created = await api("/api/requests", { method: "POST", body: JSON.stringify({ youtubeCode: video.video_id }) });
+    // Stay in "sending" until the websocket snapshot lists the request, so the button never flashes back.
+    sendingVideos.set(video.video_id, created.id);
+    setTimeout(() => {
+      if (sendingVideos.get(video.video_id) !== created.id) return;
+      sendingVideos.delete(video.video_id);
+      renderSearchButtons();
+    }, 5000);
   } catch (problem) {
-    showError(message, problem.message);
-  } finally {
-    button.disabled = false;
+    sendingVideos.delete(video.video_id);
+    if (singer) showError(status, problem.message);
   }
+  renderSearchButtons();
+}
+
+function openVideoPlayer(video) {
+  const frame = document.createElement("iframe");
+  frame.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(video.video_id)}?autoplay=1&rel=0`;
+  frame.title = video.title;
+  frame.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = "strict-origin-when-cross-origin";
+  playerFrame.replaceChildren(frame);
+  playerDialog.showModal();
+  playerStage.requestFullscreen?.()
+    .then(() => screen.orientation?.lock?.("landscape"))
+    .catch(() => {});
+}
+
+function renderSearchResults(kind, items) {
+  const list = document.querySelector(`#${kind}-results`);
+  const status = document.querySelector(`#${kind}-status`);
+  const content = document.createDocumentFragment();
+  for (const video of items) {
+    const row = document.createElement("li");
+    row.className = "search-item";
+    const media = document.createElement("div");
+    media.className = "search-thumb";
+    const image = document.createElement("img");
+    image.src = `https://i.ytimg.com/vi/${encodeURIComponent(video.video_id)}/mqdefault.jpg`;
+    image.alt = "";
+    image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "search-expand";
+    expand.title = "Ampliar vídeo";
+    expand.setAttribute("aria-label", `Ampliar ${video.title}`);
+    expand.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
+    expand.addEventListener("click", () => openVideoPlayer(video));
+    media.append(image, expand);
+    const details = document.createElement("div");
+    details.className = "search-details";
+    const title = document.createElement("strong");
+    title.textContent = video.title;
+    const meta = document.createElement("small");
+    meta.textContent = [video.channel, formatDuration(video.duration)].filter(Boolean).join(" · ");
+    details.append(title, meta);
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "search-select";
+    select.dataset.videoId = video.video_id;
+    select.dataset.title = video.title;
+    select.addEventListener("click", () => selectVideo(video, status));
+    renderSearchButton(select);
+    row.append(media, details, select);
+    content.append(row);
+  }
+  list.replaceChildren(content);
+  list.scrollTop = 0;
+}
+
+async function runSearch(kind, apiKind, query, generation) {
+  const status = document.querySelector(`#${kind}-status`);
+  const list = document.querySelector(`#${kind}-results`);
+  clearError(status);
+  status.hidden = false;
+  status.dataset.loading = "true";
+  status.textContent = "Buscando…";
+  list.replaceChildren();
+  try {
+    const result = await api(`/api/search?kind=${apiKind}&q=${encodeURIComponent(query)}`);
+    if (generation !== searchGeneration) return;
+    delete status.dataset.loading;
+    status.textContent = result.items.length ? "" : "Nenhum vídeo encontrado.";
+    renderSearchResults(kind, result.items);
+  } catch (problem) {
+    if (generation !== searchGeneration || !singer) return;
+    delete status.dataset.loading;
+    showError(status, problem.message);
+  }
+}
+
+document.querySelector("#search-open").addEventListener("click", () => {
+  searchDialog.showModal();
+  renderSearchButtons();
+  searchForm.elements.q.focus();
+});
+document.querySelector("#search-close").addEventListener("click", () => searchDialog.close());
+
+searchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const query = searchForm.elements.q.value.trim().replace(/\s+/g, " ");
+  if (query.length < 2) {
+    showError(document.querySelector("#captioned-status"), "Digite ao menos duas letras.");
+    return;
+  }
+  searchForm.elements.q.blur();
+  searchGeneration += 1;
+  runSearch("captioned", "captions", query, searchGeneration);
+  runSearch("karaoke", "karaoke", query, searchGeneration);
+});
+
+document.querySelector("#player-close").addEventListener("click", () => playerDialog.close());
+playerDialog.addEventListener("close", () => {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  screen.orientation?.unlock?.();
+  playerFrame.replaceChildren();
 });
 
 document.querySelector("#sign-out").addEventListener("click", clearSession);

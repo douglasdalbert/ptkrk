@@ -38,14 +38,10 @@
         </section>
 
         <section id="session" hidden>
-          <form id="request-form" class="request-form" novalidate>
-            <label for="video-url">Peça uma música</label>
-            <div class="request-row">
-              <input id="video-url" type="text" name="video" required placeholder="Link ou código do YouTube" autocomplete="off" inputmode="url">
-              <button class="primary" type="submit">Pedir <span aria-hidden="true">→</span></button>
-            </div>
+          <div class="request-form">
+            <button id="search-open" class="primary search-open" type="button">Buscar músicas <span aria-hidden="true">→</span></button>
             <p id="request-message" class="message" role="status"></p>
-          </form>
+          </div>
 
           <div class="scores" aria-label="Melhores pontuações">
             <section class="score-record" aria-labelledby="personal-best-label">
@@ -98,6 +94,29 @@
         </div>
       </div>
     </footer>
+    <dialog id="search-dialog" class="search-dialog" aria-label="Buscar músicas">
+      <form id="search-form" class="search-bar" role="search" novalidate>
+        <input id="search-query" type="search" name="q" maxlength="100" placeholder="Música ou artista" autocomplete="off" enterkeyhint="search" aria-label="Música ou artista">
+        <button class="primary" type="submit">Buscar</button>
+        <button id="search-close" class="search-close" type="button" aria-label="Fechar busca" title="Fechar busca">×</button>
+      </form>
+      <section class="search-area" aria-labelledby="captioned-title">
+        <header class="search-area-heading"><h2 id="captioned-title">Playback</h2></header>
+        <p id="captioned-status" class="search-status" role="status"></p>
+        <ol id="captioned-results" class="search-results"></ol>
+      </section>
+      <section class="search-area" aria-labelledby="karaoke-title">
+        <header class="search-area-heading"><h2 id="karaoke-title">Karaokê</h2></header>
+        <p id="karaoke-status" class="search-status" role="status"></p>
+        <ol id="karaoke-results" class="search-results"></ol>
+      </section>
+    </dialog>
+    <dialog id="player-dialog" class="player-dialog" aria-label="Vídeo ampliado">
+      <div id="player-stage" class="player-stage">
+        <button id="player-close" class="player-close" type="button" aria-label="Fechar vídeo" title="Fechar vídeo">×</button>
+        <div id="player-frame" class="player-frame"></div>
+      </div>
+    </dialog>
     <dialog id="group-dialog" class="confirm-dialog group-dialog" aria-labelledby="group-title">
       <h2 id="group-title">Cantar com outros</h2>
       <div id="group-list" class="group-list"></div>

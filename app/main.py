@@ -11,7 +11,9 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from typing import Literal
+
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -43,6 +45,7 @@ from app.scoring import (
 )
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
+from app.search import search_karaoke, search_limit, search_with_captions
 from app.storage import (
     add_vocal_activity,
     add_tv_notification,
@@ -899,6 +902,21 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
         )
         enqueue_request(database, request_id)
     return {"id": request_id, "status": "pending", "video_id": video_id}
+
+
+@app.get("/api/search")
+def search_videos(q: str = Query(min_length=2, max_length=100),
+                  kind: Literal["captions", "karaoke"] = "captions",
+                  singer_id: str = Depends(authenticated_singer)) -> dict:
+    del singer_id
+    query = " ".join(q.split())
+    if len(query) < 2:
+        raise HTTPException(422, "Informe ao menos duas letras")
+    search = search_with_captions if kind == "captions" else search_karaoke
+    try:
+        return {"kind": kind, "items": search(query, search_limit())}
+    except Exception as error:
+        raise HTTPException(502, "Não foi possível buscar no YouTube") from error
 
 
 @app.get("/api/requests")
