@@ -22,6 +22,7 @@ from app.scoring import (
     block_duration_ms,
     max_score,
     microphone_rms_threshold,
+    microphone_silence_ms,
     off_cue_penalty,
     off_cue_rearm_ms,
     onset_tolerance_ms,
@@ -189,7 +190,8 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "score_lane_count": score_lane_count(),
                 "off_cue_penalty": off_cue_penalty(),
                 "off_cue_rearm_ms": off_cue_rearm_ms(),
-                "microphone_rms_threshold": microphone_rms_threshold()}
+                "microphone_rms_threshold": microphone_rms_threshold(),
+                "microphone_silence_ms": microphone_silence_ms()}
     if include_caption_bars:
         snapshot["active_bars"] = active_bars
     return snapshot

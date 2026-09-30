@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.captions import parse_vtt_caption_bars
-from app.scoring import block_duration_ms, matching_block, max_score, microphone_rms_threshold, onset_tolerance_ms, record_offcue_penalty, record_onset, score_lane_count, score_snapshot, score_value
+from app.scoring import block_duration_ms, matching_block, max_score, microphone_rms_threshold, microphone_silence_ms, onset_tolerance_ms, record_offcue_penalty, record_onset, score_lane_count, score_snapshot, score_value
 from app.storage import connection, initialize
 
 
@@ -27,12 +27,14 @@ class ScoringTests(unittest.TestCase):
             "KARAOKE_SCORE_LANES": "4",
             "KARAOKE_SCORE_TOLERANCE_MS": "100",
             "KARAOKE_SCORE_RMS_THRESHOLD": "0.08",
+            "KARAOKE_SCORE_SILENCE_MS": "450",
         }):
             self.assertEqual(max_score(), 2000)
             self.assertEqual(block_duration_ms(), 750)
             self.assertEqual(score_lane_count(), 4)
             self.assertEqual(onset_tolerance_ms(), 100)
             self.assertEqual(microphone_rms_threshold(), 0.08)
+            self.assertEqual(microphone_silence_ms(), 450)
             result = parse_vtt_caption_bars(
                 """WEBVTT
 

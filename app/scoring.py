@@ -52,6 +52,10 @@ def microphone_rms_threshold() -> float:
     return max(0.005, min(0.5, value)) if math.isfinite(value) else 0.04
 
 
+def microphone_silence_ms() -> int:
+    return integer_setting("KARAOKE_SCORE_SILENCE_MS", 300, 0, 5000)
+
+
 def matching_block(bars: list[dict], position_ms: int) -> int | None:
     matches = [
         bar for bar in bars

@@ -57,6 +57,7 @@ let currentRankingMax = 1000;
 let scoredRequestId = null;
 let offCueRearmMs = 500;
 let microphoneRmsThreshold = 0.04;
+let microphoneSilenceMs = 300;
 
 function stopMicrophone() {
   if (microphoneFrame !== null) cancelAnimationFrame(microphoneFrame);
@@ -269,6 +270,7 @@ function connect() {
       currentRankingMax = message.ranking_max || 1000;
       offCueRearmMs = message.off_cue_rearm_ms || 500;
       microphoneRmsThreshold = message.microphone_rms_threshold || 0.04;
+      microphoneSilenceMs = message.microphone_silence_ms ?? 300;
       if (message.invitation?.request_id !== scoredRequestId) {
         scoredRequestId = message.invitation?.request_id || null;
       }
@@ -624,7 +626,7 @@ function sampleMicrophone() {
       if (silenceStartedAt === null) {
         silenceStartedAt = performance.now();
         silenceStartedPosition = position;
-      } else if (performance.now() - silenceStartedAt >= 300) {
+      } else if (performance.now() - silenceStartedAt >= microphoneSilenceMs) {
         setMicrophoneSpeaking(false, requestId, silenceStartedPosition);
         silenceStartedAt = null;
         silenceStartedPosition = null;
