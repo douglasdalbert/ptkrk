@@ -20,7 +20,7 @@ button { cursor:pointer; }
 .track { position:absolute; left:0; right:0; top:48%; height:clamp(126px,18vh,210px); transform:translateY(-50%); transition:top .2s; overflow:hidden; }
 .vocal-marker { position:absolute; z-index:2; left:50%; top:4%; bottom:4%; width:2px; transform:translateX(-50%); background:#ffffff6b; box-shadow:0 0 8px #000; pointer-events:none; }
 #lyric-text { position:absolute; inset:0; }
-.lyric-block { position:absolute; left:0; top:calc(4% + (var(--lane) * 32%)); display:block; max-width:min(40vw,520px); padding:7px 12px; border:1px solid #ffffff9c; border-radius:4px; background:var(--block-color); color:#101619; font-size:clamp(16px,2vw,30px); font-weight:800; line-height:1.1; overflow-wrap:anywhere; box-shadow:0 2px 12px #000b; will-change:transform; }
+.lyric-block { position:absolute; left:0; top:calc(4% + (var(--lane) * 32%)); display:block; max-width:min(40vw,520px); padding:7px 12px; border:1px solid #ffffff9c; border-radius:4px; background:var(--block-color); color:#101619; font-size:calc(clamp(16px,2vw,30px) * var(--lyric-scale,1)); font-weight:800; line-height:1.1; overflow-wrap:anywhere; box-shadow:0 2px 12px #000b; will-change:transform; }
 .lyric-block[data-result="hit"] { background:#5ac8e4; border-color:#d4f7ff; }
 .lyric-block[data-result="miss"] { background:#f47783; border-color:#ffd7db; }
 .lyric-block[data-result="waiting"] { animation: pending-score 520ms ease-in-out infinite alternate; }
@@ -70,6 +70,9 @@ button { cursor:pointer; }
 .current-score-max { color:#a4aeab; font-size:12px; font-weight:normal; }
 .actions kbd { padding:2px 4px; border:1px solid #636d6e; border-radius:2px; color:var(--lime); white-space:nowrap; font-size:10px; }
 .actions .keycaps { display:flex; flex:none; gap:3px; }
+.actions .keycaps-prefix { align-self:center; color:var(--lime); font-size:10px; white-space:nowrap; }
+.lyric-size-icon { display:flex; align-items:baseline; gap:2px; color:var(--white); font-weight:bold; font-size:19px; line-height:1; }
+.lyric-size-icon small { font-size:11px; }
 .join { display:flex; flex-direction:column; align-items:center; min-width:0; padding:7px 8px; border-left:1px solid #424849; }
 .join h2 { align-self:stretch; color:var(--pink); white-space:nowrap; text-align:center; }
 .join img { display:block; width:116px; height:116px; object-fit:contain; }

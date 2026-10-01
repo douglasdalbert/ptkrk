@@ -34,6 +34,7 @@ let lastPlaybackSyncAt = 0;
 let finishing = false;
 let skip = null;
 let barPosition = 1;
+let lyricScaleIndex = 1;
 let colorIndex = 0;
 let party = null;
 let activeSingerId = null;
@@ -60,6 +61,7 @@ const visibleBlocks = new Map();
 const approachMs = 3000;
 const laneResetPauseMs = 5000;
 const colors = ["#bda145", "#ff70ac", "#6bded0", "#c9fa45", "#f5f5ee"];
+const lyricScales = [0.75, 1, 1.25, 1.5, 1.8];
 const confirmDialog = new ConfirmDialog();
 const scorePanel = document.querySelector("#score-panel");
 const scoreBackdrop = document.querySelector("#score-backdrop");
@@ -757,7 +759,9 @@ document.addEventListener("keydown", event => {
     resetParty();
   } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
-    moveTrack(event.key === "ArrowDown" ? 1 : -1);
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    if (event.shiftKey) resizeLyrics(-direction);
+    else moveTrack(direction);
   } else if (event.key.toLowerCase() === "c" && !event.ctrlKey && !event.altKey) {
     cycleColor();
   } else if (event.key === " " && !event.ctrlKey && !event.altKey) {
@@ -779,6 +783,15 @@ function moveTrack(direction) {
 }
 
 document.querySelector("#move-track-action").addEventListener("click", () => moveTrack(1));
+
+function resizeLyrics(direction) {
+  lyricScaleIndex = Math.min(Math.max(lyricScaleIndex + direction, 0), lyricScales.length - 1);
+  lyricTrack.style.setProperty("--lyric-scale", lyricScales[lyricScaleIndex]);
+}
+
+document.querySelector("#lyric-size-action").addEventListener("click", () => {
+  resizeLyrics(lyricScaleIndex >= lyricScales.length - 1 ? -lyricScaleIndex : 1);
+});
 
 function cycleColor() {
   colorIndex = (colorIndex + 1) % colors.length;
