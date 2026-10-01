@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -44,6 +45,7 @@ from app.scoring import (
     star_low_percent,
     star_nice_percent,
 )
+from app.separation import cancel_for_playback
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
 from app.search import search_karaoke, search_limit, search_with_captions
@@ -418,6 +420,21 @@ async def requests_socket(websocket: WebSocket) -> None:
                     continue
                 with connection() as database:
                     invitation = invitation_state(database)
+                    if invitation and invitation["request_id"] == request_id and invitation["accepted"] \
+                            and bool(message.get("playing")):
+                        item = database.execute(
+                            "SELECT video_id FROM requests WHERE id = ?", (request_id,)
+                        ).fetchone()
+                        generation = database.execute(
+                            "SELECT generation FROM party WHERE id = 1"
+                        ).fetchone()[0]
+                        if item:
+                            skipped, cancelling = cancel_for_playback(database, generation, item["video_id"])
+                            if skipped or cancelling:
+                                logging.getLogger(__name__).info(
+                                    "Separação de %s descartada ao iniciar reprodução (pendente=%s, ativa=%s)",
+                                    item["video_id"], skipped, cancelling,
+                                )
                 if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                     playback_sync = None
                     save_playback_sync(None)

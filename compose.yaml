@@ -180,15 +180,16 @@ services:
       KARAOKE_DB_PATH: /data/karaoke.sqlite3
       KARAOKE_MEDIA_PATH: /media
       KARAOKE_MODEL_PATH: /models
-      OMP_NUM_THREADS: "1"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      NUMEXPR_NUM_THREADS: "1"
+      KARAOKE_SEPARATOR_CPU_THREADS: ${KARAOKE_SEPARATOR_CPU_THREADS:-8}
+      OMP_NUM_THREADS: ${KARAOKE_SEPARATOR_CPU_THREADS:-8}
+      MKL_NUM_THREADS: ${KARAOKE_SEPARATOR_CPU_THREADS:-8}
+      OPENBLAS_NUM_THREADS: ${KARAOKE_SEPARATOR_CPU_THREADS:-8}
+      NUMEXPR_NUM_THREADS: ${KARAOKE_SEPARATOR_CPU_THREADS:-8}
     volumes:
       - db_data:/data
       - media_data:/media
       - separator_models:/models
-    cpus: 0.7
+    cpus: ${KARAOKE_SEPARATOR_CPU_LIMIT:-8.4}
     restart: unless-stopped
     develop:
       watch:

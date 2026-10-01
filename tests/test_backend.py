@@ -13,7 +13,13 @@ from app.captions import CAPTION_VERSION
 from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
 from app.media import create_preview, remove_unused_media
 from app.queue import enqueue_request
-from app.separation import claim_next_job, skip_pending_job
+from app.separation import (
+    cancel_for_playback,
+    claim_next_job,
+    find_instrumental_output,
+    process_next_job,
+    skip_pending_job,
+)
 from app.storage import connection, initialize
 from app.worker import enqueue_ready_separations, outdated_ready_captions, process_next, recover_missing_media
 
@@ -78,6 +84,32 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(separation["status"], "pending")
         self.assertFalse(process_next())
 
+    def test_cached_instrumental_marks_new_request_karaokezado_without_requeue(self):
+        media_root = Path(self.directory.name) / "media"
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id, status) "
+                "VALUES (?, 'dQw4w9WgXcQ', 'done')", (generation,)
+            )
+        karaoke_video = media_root / generation / "karaoke_videos" / "dQw4w9WgXcQ.mp4"
+        karaoke_video.parent.mkdir(parents=True)
+        karaoke_video.write_bytes(b"cached instrumental video")
+        with patch("app.worker.MEDIA_ROOT", media_root), \
+             patch("app.worker.download_video", return_value="Minha música"), \
+             patch("app.worker.create_preview"), patch("app.worker.create_caption_bars"):
+            self.assertTrue(process_next())
+        with connection() as database:
+            request_status = database.execute(
+                "SELECT status FROM requests WHERE id = 'request'"
+            ).fetchone()[0]
+            job_status = database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (generation, "dQw4w9WgXcQ"),
+            ).fetchone()[0]
+        self.assertEqual(request_status, "karaokezado")
+        self.assertEqual(job_status, "done")
+
     def test_separation_jobs_are_serial_and_pending_song_can_be_skipped(self):
         with connection() as database:
             generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
@@ -105,6 +137,82 @@ class WorkerTests(unittest.TestCase):
                 "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
                 (generation, "glvVYIhdWlU"),
             ).fetchone()[0], "skipped")
+
+    def test_playback_cancels_active_separation_and_skips_pending_separation(self):
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.executemany(
+                "INSERT INTO vocal_separation_jobs(generation, video_id, status) VALUES (?, ?, ?)",
+                [(generation, "dQw4w9WgXcQ", "processing"), (generation, "glvVYIhdWlU", "pending")],
+            )
+            self.assertEqual(cancel_for_playback(database, generation, "dQw4w9WgXcQ"), (0, 1))
+            self.assertEqual(cancel_for_playback(database, generation, "glvVYIhdWlU"), (1, 0))
+            statuses = dict(database.execute(
+                "SELECT video_id, status FROM vocal_separation_jobs WHERE generation = ?", (generation,)
+            ).fetchall())
+        self.assertEqual(statuses, {"dQw4w9WgXcQ": "cancelling", "glvVYIhdWlU": "skipped"})
+
+    def test_singleton_index_allows_only_one_processing_or_cancelling_job(self):
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id, status) VALUES (?, ?, 'processing')",
+                (generation, "dQw4w9WgXcQ"),
+            )
+            with self.assertRaises(Exception):
+                database.execute(
+                    "INSERT INTO vocal_separation_jobs(generation, video_id, status) VALUES (?, ?, 'cancelling')",
+                    (generation, "glvVYIhdWlU"),
+                )
+
+    def test_media_cleanup_cancels_running_separation_before_deleting_source(self):
+        media_root = Path(self.directory.name) / "media"
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status = 'played' WHERE id = 'request'")
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id, status) "
+                "VALUES (?, 'dQw4w9WgXcQ', 'processing')", (generation,)
+            )
+        source = media_root / generation / "videos" / "dQw4w9WgXcQ.mp4"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"source video")
+        with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "production"):
+            with connection() as database:
+                self.assertFalse(remove_unused_media(database, "dQw4w9WgXcQ", generation))
+                self.assertTrue(source.is_file())
+                self.assertEqual(database.execute(
+                    "SELECT status FROM vocal_separation_jobs WHERE video_id='dQw4w9WgXcQ'"
+                ).fetchone()[0], "cancelling")
+                database.execute(
+                    "UPDATE vocal_separation_jobs SET status = 'skipped' WHERE video_id='dQw4w9WgXcQ'"
+                )
+                self.assertTrue(remove_unused_media(database, "dQw4w9WgXcQ", generation))
+                self.assertFalse(source.exists())
+
+    def test_separator_failure_message_is_saved_on_job(self):
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id) VALUES (?, 'dQw4w9WgXcQ')",
+                (generation,),
+            )
+        with patch("app.separation.separate_video", side_effect=FileNotFoundError("source missing")):
+            self.assertTrue(process_next_job())
+        with connection() as database:
+            job = database.execute(
+                "SELECT status, error FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (generation, "dQw4w9WgXcQ"),
+            ).fetchone()
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error"], "source missing")
+
+    def test_find_instrumental_accepts_audio_separator_output_name(self):
+        directory = Path(self.directory.name)
+        output = directory / "audio_(Instrumental)_UVR_MDXNET_KARA_2.wav"
+        output.write_bytes(b"wave data")
+        self.assertEqual(find_instrumental_output(directory), output)
 
     def test_old_ready_captions_are_eligible_for_refresh(self):
         with connection() as database:

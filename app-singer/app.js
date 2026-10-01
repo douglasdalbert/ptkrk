@@ -365,7 +365,7 @@ function startGroupRoomPolling(requestId) {
 }
 
 function previewFor(item, placeholder) {
-  if (item.status !== "ready") return;
+  if (!(["ready", "karaokezado"].includes(item.status))) return;
   let cached = previewCache.get(item.video_id);
   if (!cached) {
     cached = { url: null, task: null };

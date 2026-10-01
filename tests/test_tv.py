@@ -109,15 +109,19 @@ class TvTests(unittest.TestCase):
             database.execute("UPDATE requests SET status = 'karaokezado' WHERE id = 'song'")
         original = Path(self.directory.name) / generation / "videos" / "glvVYIhdWlU.mp4"
         separated = Path(self.directory.name) / generation / "karaoke_videos" / "glvVYIhdWlU.mp4"
+        preview = Path(self.directory.name) / generation / "previews" / "glvVYIhdWlU.jpg"
         original.parent.mkdir(parents=True)
         separated.parent.mkdir(parents=True)
+        preview.parent.mkdir(parents=True)
         original.write_bytes(b"original")
         separated.write_bytes(b"instrumental")
+        preview.write_bytes(b"thumbnail")
         self.assertEqual(
             self.client.post("/api/tv/start", headers=self.tv_headers).json()["invitation"]["request_id"],
             "song",
         )
         self.assertEqual(self.client.get("/api/tv/song/video").content, b"instrumental")
+        self.assertEqual(self.client.get("/api/tv/song/preview").content, b"thumbnail")
         separated.unlink()
         self.assertEqual(self.client.get("/api/tv/song/video").content, b"original")
 
@@ -210,6 +214,32 @@ class TvTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(json.loads(row["hit_blocks"]), [0])
         self.assertEqual(row["penalties"], 1)
+
+    def test_tv_playback_sync_cancels_matching_vocal_separation(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) "
+                "VALUES (1,'song',0,1,1)"
+            )
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation,video_id,status) "
+                "VALUES (?, 'glvVYIhdWlU', 'processing')", (generation,)
+            )
+        with self.client.websocket_connect("/ws/requests", headers={
+            "Origin": "http://localhost:8001", "Host": "localhost:8001"
+        }) as tv_socket:
+            tv_socket.send_json({"token": ""})
+            tv_socket.receive_json()
+            tv_socket.send_json({
+                "type": "playback_sync", "request_id": "song", "position_ms": 0, "playing": True,
+            })
+        with connection() as database:
+            self.assertEqual(database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (generation, "glvVYIhdWlU"),
+            ).fetchone()[0], "cancelling")
 
     def test_tv_caption_switch_resets_score_without_ending_singer_turn(self):
         self.add_ready()

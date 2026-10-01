@@ -525,7 +525,7 @@ function render(snapshot) {
   starCloseMs = snapshot.star_close_ms ?? starCloseMs;
   const items = snapshot.items.filter(item => item.position);
   const current = snapshot.invitation && items.find(item => item.id === snapshot.invitation.request_id);
-  const next = current || items.slice(0, 4).find(item => item.status === "ready");
+  const next = current || items.slice(0, 4).find(item => ["ready", "karaokezado"].includes(item.status));
   const others = items.filter(item => activeId ? item.id !== activeId : true).slice(0, 4);
   const skipped = snapshot.skip;
   skip = skipped;
@@ -546,20 +546,20 @@ function render(snapshot) {
   }
 
   const status = document.querySelector("#next-status");
-  status.textContent = current ? (current.status === "ready" ? "PRÓXIMA MÚSICA" : "PREPARANDO") :
+  status.textContent = current ? (["ready", "karaokezado"].includes(current.status) ? "PRÓXIMA MÚSICA" : "PREPARANDO") :
     next ? "AGUARDANDO CANTOR" : items.length ? "PREPARANDO MÚSICAS" : "AGUARDANDO MÚSICAS";
   document.querySelector("#next-title").textContent = next?.title || (next ? next.video_id : "A festa começa aqui.");
   document.querySelector("#next-singer").textContent = next ?
     [next.singer_name, ...next.backvocals.map(vocal => vocal.singer_name)].join(" + ") : "";
   const preview = document.querySelector("#next-preview");
-  preview.hidden = !next || next.status !== "ready";
+  preview.hidden = !next || !["ready", "karaokezado"].includes(next.status);
   preview.onerror = () => { preview.hidden = true; };
   if (!preview.hidden) preview.src = `/api/tv/${encodeURIComponent(next.id)}/preview`;
 
   const upcoming = document.querySelector("#upcoming");
   upcoming.replaceChildren(...others.map(item => {
     const article = document.createElement("article");
-    if (item.status === "ready") {
+    if (["ready", "karaokezado"].includes(item.status)) {
       const image = document.createElement("img");
       image.src = `/api/tv/${encodeURIComponent(item.id)}/preview`;
       image.alt = "";

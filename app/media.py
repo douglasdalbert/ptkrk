@@ -23,10 +23,20 @@ def remove_unused_media(database: sqlite3.Connection, video_id: str, generation:
     if active:
         return False
     database.execute(
-        "UPDATE vocal_separation_jobs SET status = 'skipped' "
+        "UPDATE vocal_separation_jobs SET status = 'skipped', error = NULL "
         "WHERE generation = ? AND video_id = ? AND status IN ('pending', 'done')",
         (generation, video_id),
     )
+    running_job = database.execute(
+        "UPDATE vocal_separation_jobs SET status = 'cancelling' "
+        "WHERE generation = ? AND video_id = ? AND status = 'processing'",
+        (generation, video_id),
+    )
+    if running_job.rowcount or database.execute(
+        "SELECT 1 FROM vocal_separation_jobs WHERE generation = ? AND video_id = ? AND status = 'cancelling'",
+        (generation, video_id),
+    ).fetchone():
+        return False
     for category, suffix in (("videos", ".mp4"), ("karaoke_videos", ".mp4"), ("previews", ".jpg"),
                              ("analysis", ".json"), ("captions", ".json")):
         (MEDIA_ROOT / generation / category / f"{video_id}{suffix}").unlink(missing_ok=True)

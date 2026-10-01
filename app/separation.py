@@ -14,6 +14,17 @@ logger = logging.getLogger(__name__)
 MODEL_FILENAME = "UVR_MDXNET_KARA_2.onnx"
 
 
+class SeparationCancelled(Exception):
+    pass
+
+
+def find_instrumental_output(directory: Path) -> Path:
+    candidates = list(directory.glob("*Instrumental*.wav"))
+    if len(candidates) != 1 or candidates[0].stat().st_size == 0:
+        raise RuntimeError("O separador não produziu uma faixa instrumental válida")
+    return candidates[0]
+
+
 def recover_interrupted_jobs() -> None:
     with connection() as database:
         database.execute("BEGIN IMMEDIATE")
@@ -21,6 +32,11 @@ def recover_interrupted_jobs() -> None:
         database.execute(
             "UPDATE vocal_separation_jobs SET status = 'pending' "
             "WHERE generation = ? AND status = 'processing'",
+            (generation,),
+        )
+        database.execute(
+            "UPDATE vocal_separation_jobs SET status = 'skipped', error = NULL "
+            "WHERE generation = ? AND status = 'cancelling'",
             (generation,),
         )
 
@@ -31,6 +47,64 @@ def skip_pending_job(database, generation: str, video_id: str) -> None:
         "WHERE generation = ? AND video_id = ? AND status = 'pending'",
         (generation, video_id),
     )
+
+
+def cancel_for_playback(database, generation: str, video_id: str) -> tuple[int, int]:
+    pending = database.execute(
+        "UPDATE vocal_separation_jobs SET status = 'skipped' "
+        "WHERE generation = ? AND video_id = ? AND status = 'pending'",
+        (generation, video_id),
+    ).rowcount
+    processing = database.execute(
+        "UPDATE vocal_separation_jobs SET status = 'cancelling' "
+        "WHERE generation = ? AND video_id = ? AND status = 'processing'",
+        (generation, video_id),
+    ).rowcount
+    return pending, processing
+
+
+def job_is_processing(job: dict) -> bool:
+    with connection() as database:
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        active = database.execute(
+            "SELECT 1 FROM vocal_separation_jobs WHERE generation = ? AND video_id = ? AND status = 'processing'",
+            (job["generation"], job["video_id"]),
+        ).fetchone()
+    return generation == job["generation"] and active is not None
+
+
+def run_cancellable(command: list[str], job: dict, timeout: int, environment: dict | None = None) -> None:
+    process = subprocess.Popen(command, env=environment)
+    started = time.monotonic()
+    try:
+        while True:
+            try:
+                return_code = process.wait(timeout=1)
+                if return_code:
+                    raise subprocess.CalledProcessError(return_code, command)
+                return
+            except subprocess.TimeoutExpired:
+                if not job_is_processing(job):
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    raise SeparationCancelled(job["video_id"])
+                if time.monotonic() - started > timeout:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                    raise subprocess.TimeoutExpired(command, timeout)
+    except BaseException:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        raise
 
 
 def claim_next_job() -> dict | None:
@@ -44,7 +118,7 @@ def claim_next_job() -> dict | None:
             (generation,),
         )
         if database.execute(
-            "SELECT 1 FROM vocal_separation_jobs WHERE status = 'processing' LIMIT 1"
+            "SELECT 1 FROM vocal_separation_jobs WHERE status IN ('processing', 'cancelling') LIMIT 1"
         ).fetchone():
             return None
         item = database.execute(
@@ -61,7 +135,7 @@ def claim_next_job() -> dict | None:
         if item is None:
             return None
         database.execute(
-            "UPDATE vocal_separation_jobs SET status = 'processing' "
+            "UPDATE vocal_separation_jobs SET status = 'processing', error = NULL "
             "WHERE generation = ? AND video_id = ? AND status = 'pending'",
             (item["generation"], item["video_id"]),
         )
@@ -76,38 +150,38 @@ def separate_video(job: dict) -> None:
     target = target_dir / f"{video_id}.mp4"
     if not source.is_file():
         raise FileNotFoundError(f"Vídeo original não encontrado: {video_id}")
+    logger.info("Iniciando separação vocal para YouTube %s", video_id)
 
     environment = os.environ.copy()
+    threads = os.getenv("KARAOKE_SEPARATOR_CPU_THREADS", "8")
     for variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
-        environment[variable] = "1"
+        environment[variable] = threads
 
-    with tempfile.TemporaryDirectory(prefix="karaoke-separation-") as temporary:
+    with tempfile.TemporaryDirectory(prefix=f"karaoke-separation-{video_id}-") as temporary:
         work = Path(temporary)
         audio = work / "audio.wav"
-        subprocess.run(
+        run_cancellable(
             ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(source), "-vn",
              "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", "-y", str(audio)],
-            check=True, timeout=180,
+            job, timeout=180,
         )
-        subprocess.run(
+        run_cancellable(
             ["audio-separator", str(audio), "--model_filename", MODEL_FILENAME,
              "--model_file_dir", os.getenv("KARAOKE_MODEL_PATH", "/models"),
              "--output_dir", str(work), "--output_format", "WAV", "--single_stem", "Instrumental"],
-            check=True, timeout=1800, env=environment,
+            job, timeout=1800, environment=environment,
         )
-        instrumentals = list(work.glob("*_Instrumental*.wav"))
-        if len(instrumentals) != 1 or instrumentals[0].stat().st_size == 0:
-            raise RuntimeError("O separador não produziu uma faixa instrumental válida")
+        instrumental = find_instrumental_output(work)
 
         target_dir.mkdir(parents=True, exist_ok=True)
         temporary_video = target_dir / f".{video_id}.{uuid4().hex}.tmp.mp4"
         try:
-            subprocess.run(
+            run_cancellable(
                 ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(source),
-                 "-i", str(instrumentals[0]), "-map", "0:v:0", "-map", "1:a:0", "-map_metadata", "0",
+                 "-i", str(instrumental), "-map", "0:v:0", "-map", "1:a:0", "-map_metadata", "0",
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-y",
                  str(temporary_video)],
-                check=True, timeout=180,
+                job, timeout=180,
             )
             if not temporary_video.is_file() or temporary_video.stat().st_size == 0:
                 raise RuntimeError("O vídeo karaokê ficou vazio")
@@ -151,14 +225,47 @@ def process_next_job() -> bool:
         return False
     try:
         separate_video(job)
-    except Exception:
-        logger.exception("Falha ao separar áudio de %s; mantendo vídeo original", job["video_id"])
+    except SeparationCancelled:
+        logger.info("Separação de %s cancelada porque a música começou a tocar", job["video_id"])
         with connection() as database:
             database.execute(
-                "UPDATE vocal_separation_jobs SET status = 'failed' "
-                "WHERE generation = ? AND video_id = ? AND status = 'processing'",
+                "UPDATE vocal_separation_jobs SET status = 'skipped', error = NULL "
+                "WHERE generation = ? AND video_id = ? AND status = 'cancelling'",
                 (job["generation"], job["video_id"]),
             )
+            if not database.execute(
+                "SELECT 1 FROM requests WHERE video_id = ? "
+                "AND status IN ('pending', 'processing', 'ready', 'karaokezado') LIMIT 1",
+                (job["video_id"],),
+            ).fetchone():
+                from app.media import remove_unused_media
+                remove_unused_media(database, job["video_id"], job["generation"])
+    except Exception as error:
+        logger.exception("Falha ao separar áudio de %s; mantendo vídeo original", job["video_id"])
+        with connection() as database:
+            current_job = database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (job["generation"], job["video_id"]),
+            ).fetchone()
+            if current_job and current_job["status"] == "cancelling":
+                database.execute(
+                    "UPDATE vocal_separation_jobs SET status = 'skipped', error = NULL "
+                    "WHERE generation = ? AND video_id = ?",
+                    (job["generation"], job["video_id"]),
+                )
+            else:
+                database.execute(
+                    "UPDATE vocal_separation_jobs SET status = 'failed', error = ? "
+                    "WHERE generation = ? AND video_id = ? AND status = 'processing'",
+                    (str(error)[:500], job["generation"], job["video_id"]),
+                )
+            if not database.execute(
+                "SELECT 1 FROM requests WHERE video_id = ? "
+                "AND status IN ('pending', 'processing', 'ready', 'karaokezado') LIMIT 1",
+                (job["video_id"],),
+            ).fetchone():
+                from app.media import remove_unused_media
+                remove_unused_media(database, job["video_id"], job["generation"])
     return True
 
 

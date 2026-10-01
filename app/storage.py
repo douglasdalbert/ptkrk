@@ -146,11 +146,13 @@ def initialize() -> None:
                 generation TEXT NOT NULL,
                 video_id TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (generation, video_id)
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS vocal_separation_singleton_idx
-                ON vocal_separation_jobs(status) WHERE status = 'processing';
+            DROP INDEX IF EXISTS vocal_separation_singleton_idx;
+            CREATE UNIQUE INDEX vocal_separation_singleton_idx
+                ON vocal_separation_jobs((1)) WHERE status IN ('processing', 'cancelling');
             CREATE TABLE IF NOT EXISTS accepted_counts (
                 singer_id TEXT PRIMARY KEY REFERENCES singers(id) ON DELETE CASCADE,
                 total INTEGER NOT NULL DEFAULT 0
@@ -244,6 +246,8 @@ def initialize() -> None:
             database.execute("ALTER TABLE score_events ADD COLUMN offcue_window INTEGER")
         if "caption_track_id" not in {row[1] for row in database.execute("PRAGMA table_info(requests)")}:
             database.execute("ALTER TABLE requests ADD COLUMN caption_track_id TEXT")
+        if "error" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_separation_jobs)")}:
+            database.execute("ALTER TABLE vocal_separation_jobs ADD COLUMN error TEXT")
         if "score_units" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
             database.execute("ALTER TABLE song_scores ADD COLUMN score_units INTEGER")
         if "boosted_blocks" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:

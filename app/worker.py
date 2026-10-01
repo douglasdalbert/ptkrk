@@ -110,18 +110,20 @@ def process_next() -> bool:
                     database.execute("UPDATE ready_queue SET position = ? WHERE request_id = ?", (position, row["request_id"]))
                 remove_unused_media(database, item["video_id"], generation)
     else:
+        karaoke_video = MEDIA_ROOT / generation / "karaoke_videos" / f"{item['video_id']}.mp4"
+        cached_separation = karaoke_video.is_file()
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
             updated = database.execute(
-                "UPDATE requests SET status = 'ready', title = ? WHERE id = ? AND status = 'processing' "
+                "UPDATE requests SET status = ?, title = ? WHERE id = ? AND status = 'processing' "
                 "AND ? = (SELECT generation FROM party WHERE id=1)",
-                (title, item["id"], generation),
+                ("karaokezado" if cached_separation else "ready", title, item["id"], generation),
             )
-            if updated.rowcount:
+            if updated.rowcount and not cached_separation:
                 database.execute(
                     "INSERT INTO vocal_separation_jobs(generation, video_id) VALUES (?, ?) "
                     "ON CONFLICT(generation, video_id) DO UPDATE SET status = 'pending' "
-                    "WHERE vocal_separation_jobs.status IN ('failed', 'skipped')",
+                    "WHERE vocal_separation_jobs.status IN ('failed', 'skipped', 'done')",
                     (generation, item["video_id"]),
                 )
     with connection() as database:
