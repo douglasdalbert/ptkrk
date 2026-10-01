@@ -117,11 +117,25 @@ class InvitationTests(unittest.TestCase):
     def test_only_owner_can_accept_once_without_auto_deadline(self):
         with connection() as database:
             start_invitation(database, 100)
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id) VALUES (?, 'glvVYIhdWlU')",
+                (generation,),
+            )
             self.assertFalse(accept_invitation(database, "A1", "B", 110))
             self.assertTrue(accept_invitation(database, "A1", "A", 200))
             self.assertFalse(accept_invitation(database, "A1", "A", 200))
             self.assertTrue(invitation_state(database)["accepted"])
             self.assertEqual(database.execute("SELECT total FROM accepted_counts WHERE singer_id = 'A'").fetchone()[0], 1)
+            self.assertEqual(database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE video_id = 'glvVYIhdWlU'"
+            ).fetchone()[0], "skipped")
+
+    def test_karaokezado_requests_remain_invitable(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'karaokezado' WHERE id = 'A1'")
+            self.assertEqual(start_invitation(database, 100)["request_id"], "A1")
+            self.assertTrue(accept_invitation(database, "A1", "A", 101))
 
     def test_group_invites_show_decline_and_join_before_shared_start(self):
         with connection() as database:

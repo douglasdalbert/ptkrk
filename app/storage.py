@@ -142,6 +142,15 @@ def initialize() -> None:
                 request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
                 position INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS vocal_separation_jobs (
+                generation TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (generation, video_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS vocal_separation_singleton_idx
+                ON vocal_separation_jobs(status) WHERE status = 'processing';
             CREATE TABLE IF NOT EXISTS accepted_counts (
                 singer_id TEXT PRIMARY KEY REFERENCES singers(id) ON DELETE CASCADE,
                 total INTEGER NOT NULL DEFAULT 0
@@ -275,7 +284,8 @@ def initialize() -> None:
         queued = {row[0] for row in database.execute("SELECT request_id FROM ready_queue")}
         position = database.execute("SELECT COALESCE(MAX(position), 0) FROM ready_queue").fetchone()[0]
         for row in database.execute(
-            "SELECT id FROM requests WHERE status IN ('pending', 'processing', 'ready') ORDER BY created_at, rowid"
+            "SELECT id FROM requests WHERE status IN ('pending', 'processing', 'ready', 'karaokezado') "
+            "ORDER BY created_at, rowid"
         ):
             if row["id"] not in queued:
                 position += 1

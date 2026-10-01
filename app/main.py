@@ -709,6 +709,7 @@ def tv_reset() -> dict[str, str]:
         generation = str(uuid4())
         database.execute("UPDATE party SET generation=? WHERE id=1", (generation,))
         for table in ("skip_request", "invitation", "missed_invitations", "group_rooms", "ready_queue",
+                  "vocal_separation_jobs",
                       "accepted_counts", "requests", "singers", "vocal_activity", "tv_notifications",
                       "runtime_state"):
             database.execute(f"DELETE FROM {table}")
@@ -734,7 +735,7 @@ def tv_select_caption_track(request_id: str, selection: CaptionTrackSelection) -
         database.execute("BEGIN IMMEDIATE")
         invitation = invitation_state(database)
         item = database.execute(
-            "SELECT video_id, caption_track_id FROM requests WHERE id = ? AND status = 'ready'",
+            "SELECT video_id, caption_track_id FROM requests WHERE id = ? AND status IN ('ready', 'karaokezado')",
             (request_id,),
         ).fetchone()
         if not invitation or invitation["request_id"] != request_id or not invitation["accepted"] or item is None:
@@ -786,7 +787,8 @@ def tv_media(request_id: str, kind: str) -> Response:
         raise HTTPException(404, "Mídia indisponível")
     with connection() as database:
         item = database.execute(
-            "SELECT video_id, caption_track_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)
+            "SELECT video_id, caption_track_id, status FROM requests WHERE id = ? "
+            "AND status IN ('ready', 'karaokezado')", (request_id,)
         ).fetchone()
     if item is None:
         raise HTTPException(404, "Mídia indisponível")
@@ -811,6 +813,10 @@ def tv_media(request_id: str, kind: str) -> Response:
         "video": ("videos", ".mp4"),
         "preview": ("previews", ".jpg"),
     }[kind]
+    if kind == "video" and item["status"] == "karaokezado":
+        separated = MEDIA_ROOT / generation / "karaoke_videos" / f"{item['video_id']}.mp4"
+        if separated.is_file():
+            return FileResponse(separated, media_type="video/mp4")
     media = MEDIA_ROOT / generation / category / f"{item['video_id']}{suffix}"
     if not media.is_file():
         raise HTTPException(404, "Mídia indisponível")
@@ -956,7 +962,7 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
         database.execute("BEGIN IMMEDIATE")
         existing = database.execute(
             """SELECT id, singer_id, status FROM requests WHERE video_id = ?
-               AND status IN ('pending', 'processing', 'ready') ORDER BY created_at, rowid LIMIT 1""",
+               AND status IN ('pending', 'processing', 'ready', 'karaokezado') ORDER BY created_at, rowid LIMIT 1""",
             (video_id,),
         ).fetchone()
         if existing:
@@ -1064,7 +1070,7 @@ def open_group_room(request_id: str, singer_id: str = Depends(authenticated_sing
             "SELECT singer_id, video_id, status FROM requests WHERE id = ?", (request_id,),
         ).fetchone()
         invitation = invitation_state(database)
-        if (not request or request["singer_id"] != singer_id or request["status"] != "ready"
+        if (not request or request["singer_id"] != singer_id or request["status"] not in ("ready", "karaokezado")
                 or not invitation or invitation["request_id"] != request_id or skip_state(database)):
             raise HTTPException(409, "Grupo indisponível")
         database.execute(
@@ -1092,7 +1098,7 @@ def invite_guest(request_id: str, guest_id: str, singer_id: str = Depends(authen
         database.execute("BEGIN IMMEDIATE")
         request = database.execute("SELECT singer_id, video_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
         invitation = invitation_state(database)
-        if (not request or request["singer_id"] != singer_id or request["status"] != "ready"
+        if (not request or request["singer_id"] != singer_id or request["status"] not in ("ready", "karaokezado")
                 or not invitation or invitation["request_id"] != request_id or invitation["accepted"]
                 or invitation["lead_accepted"] or skip_state(database)):
             raise HTTPException(409, "Convite indisponível")
@@ -1149,7 +1155,7 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
         if request["singer_id"] != singer_id and backvocal is None:
             raise HTTPException(404, "Pedido não encontrado")
         invited = invite and invite["request_id"] == request_id
-        if request["status"] not in ("pending", "processing", "ready", "failed") or (
+        if request["status"] not in ("pending", "processing", "ready", "karaokezado", "failed") or (
             invited and (invite["accepted"] or (backvocal["accepted"] if backvocal else invite["lead_accepted"]))
         ):
             raise HTTPException(409, "Não é possível remover uma música já aceita")
@@ -1181,7 +1187,7 @@ def remove_request(request_id: str, singer_id: str = Depends(authenticated_singe
 def request_preview(request_id: str, singer_id: str = Depends(authenticated_singer)) -> FileResponse:
     with connection() as database:
         request = database.execute(
-            "SELECT video_id FROM requests WHERE id = ? AND status = 'ready'", (request_id,)
+            "SELECT video_id FROM requests WHERE id = ? AND status IN ('ready', 'karaokezado')", (request_id,)
         ).fetchone()
     if request is None:
         raise HTTPException(404, "Prévia indisponível")

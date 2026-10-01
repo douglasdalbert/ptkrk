@@ -17,12 +17,17 @@ def remove_unused_media(database: sqlite3.Connection, video_id: str, generation:
         return False
     active = database.execute(
         """SELECT 1 FROM requests WHERE video_id = ?
-           AND status IN ('pending', 'processing', 'ready') LIMIT 1""",
+              AND status IN ('pending', 'processing', 'ready', 'karaokezado') LIMIT 1""",
         (video_id,),
     ).fetchone()
     if active:
         return False
-    for category, suffix in (("videos", ".mp4"), ("previews", ".jpg"),
+    database.execute(
+        "UPDATE vocal_separation_jobs SET status = 'skipped' "
+        "WHERE generation = ? AND video_id = ? AND status IN ('pending', 'done')",
+        (generation, video_id),
+    )
+    for category, suffix in (("videos", ".mp4"), ("karaoke_videos", ".mp4"), ("previews", ".jpg"),
                              ("analysis", ".json"), ("captions", ".json")):
         (MEDIA_ROOT / generation / category / f"{video_id}{suffix}").unlink(missing_ok=True)
     for alternate in (MEDIA_ROOT / generation / "captions").glob(f"{video_id}.*.json"):

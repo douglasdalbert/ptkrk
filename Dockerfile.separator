@@ -1,0 +1,9 @@
+FROM beveradb/audio-separator@sha256:ca1728beb160e3623c0873410b2ae74e5194f1bca07286ef825a9e9e4d171bd1
+
+WORKDIR /srv
+
+RUN pip install --no-cache-dir audioread yt-dlp
+
+COPY app ./app
+
+ENTRYPOINT ["python", "-m", "app.separation"]

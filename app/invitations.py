@@ -3,6 +3,7 @@ import sqlite3
 from app.captions import selected_caption_path
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import PROTECTED_QUEUE_SIZE
+from app.separation import skip_pending_job
 from app.scoring import finalize_performance
 
 SKIP_SECONDS = 5
@@ -27,7 +28,7 @@ def start_invitation(database: sqlite3.Connection, now: float, exclude_request_i
     first = database.execute(
         """SELECT ready_queue.request_id FROM ready_queue
            JOIN requests ON requests.id = ready_queue.request_id
-                                         WHERE ready_queue.position <= ? AND requests.status = 'ready'
+                                         WHERE ready_queue.position <= ? AND requests.status IN ('ready', 'karaokezado')
                            AND (? IS NULL OR ready_queue.request_id != ?)
                      ORDER BY ready_queue.position LIMIT 1""",
                                              (PROTECTED_QUEUE_SIZE, exclude_request_id, exclude_request_id),
@@ -84,7 +85,7 @@ def apply_skip(database: sqlite3.Connection, now: float) -> dict | None:
     database.execute("DELETE FROM invitation WHERE id = 1")
     next_ready = database.execute(
         """SELECT ready_queue.request_id FROM ready_queue JOIN requests ON requests.id = ready_queue.request_id
-              WHERE ready_queue.position <= ? AND requests.status = 'ready'
+              WHERE ready_queue.position <= ? AND requests.status IN ('ready', 'karaokezado')
              AND ready_queue.request_id != ? ORDER BY ready_queue.position LIMIT 1""",
           (PROTECTED_QUEUE_SIZE, request_id),
     ).fetchone()
@@ -100,7 +101,7 @@ def accept_invitation(database: sqlite3.Connection, request_id: str, singer_id: 
     if skip_state(database):
         return False
     owner = database.execute("SELECT singer_id, status FROM requests WHERE id = ?", (request_id,)).fetchone()
-    if owner is None or owner["status"] != "ready":
+    if owner is None or owner["status"] not in ("ready", "karaokezado"):
         return False
     if owner["singer_id"] == singer_id:
         if current["lead_accepted"]:
@@ -118,6 +119,9 @@ def accept_invitation(database: sqlite3.Connection, request_id: str, singer_id: 
         "SELECT 1 FROM backvocals WHERE request_id = ? AND joined = 1 AND accepted = 0 LIMIT 1", (request_id,),
     ).fetchone():
         database.execute("UPDATE invitation SET accepted = 1 WHERE id = 1")
+        generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+        video_id = database.execute("SELECT video_id FROM requests WHERE id = ?", (request_id,)).fetchone()[0]
+        skip_pending_job(database, generation, video_id)
     database.execute(
           """INSERT INTO accepted_counts(singer_id, total) VALUES (?, 1)
               ON CONFLICT(singer_id) DO UPDATE SET total = total + 1""",

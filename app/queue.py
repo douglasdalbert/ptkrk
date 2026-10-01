@@ -12,7 +12,7 @@ def enqueue_request(database: sqlite3.Connection, request_id: str) -> None:
            FROM ready_queue
            JOIN requests ON requests.id = ready_queue.request_id
            LEFT JOIN accepted_counts ON accepted_counts.singer_id = requests.singer_id
-           WHERE requests.status IN ('pending', 'processing', 'ready')
+           WHERE requests.status IN ('pending', 'processing', 'ready', 'karaokezado')
            ORDER BY ready_queue.position"""
     ).fetchall()
     protected = rows[:PROTECTED_QUEUE_SIZE]
@@ -20,7 +20,7 @@ def enqueue_request(database: sqlite3.Connection, request_id: str) -> None:
         """SELECT requests.id AS request_id, requests.singer_id,
                   COALESCE(accepted_counts.total, 0) AS accepted
            FROM requests LEFT JOIN accepted_counts ON accepted_counts.singer_id = requests.singer_id
-           WHERE requests.id = ? AND requests.status IN ('pending', 'processing', 'ready')""",
+           WHERE requests.id = ? AND requests.status IN ('pending', 'processing', 'ready', 'karaokezado')""",
         (request_id,),
     ).fetchone()
     if newcomer is None:

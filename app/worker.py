@@ -13,12 +13,28 @@ logger = logging.getLogger(__name__)
 
 
 def recover_missing_media(database, generation: str) -> None:
-    for item in database.execute("SELECT id, video_id FROM requests WHERE status = 'ready'").fetchall():
+    for item in database.execute(
+        "SELECT id, video_id, status FROM requests WHERE status IN ('ready', 'karaokezado')"
+    ).fetchall():
         video = MEDIA_ROOT / generation / "videos" / f"{item['video_id']}.mp4"
         if not video.is_file():
             database.execute("UPDATE requests SET status = 'pending' WHERE id = ?", (item["id"],))
             database.execute("DELETE FROM skip_request WHERE request_id = ?", (item["id"],))
             database.execute("DELETE FROM invitation WHERE request_id = ?", (item["id"],))
+            (MEDIA_ROOT / generation / "karaoke_videos" / f"{item['video_id']}.mp4").unlink(missing_ok=True)
+            database.execute(
+                "UPDATE vocal_separation_jobs SET status = 'pending' WHERE generation = ? AND video_id = ?",
+                (generation, item["video_id"]),
+            )
+        elif item["status"] == "karaokezado":
+            separated = MEDIA_ROOT / generation / "karaoke_videos" / f"{item['video_id']}.mp4"
+            if not separated.is_file():
+                database.execute("UPDATE requests SET status = 'ready' WHERE id = ?", (item["id"],))
+                database.execute(
+                    "UPDATE vocal_separation_jobs SET status = 'pending' "
+                    "WHERE generation = ? AND video_id = ? AND status = 'done'",
+                    (generation, item["video_id"]),
+                )
 
 
 def outdated_ready_captions(excluded: set[tuple[str, str]]) -> tuple[str, str] | None:
@@ -27,7 +43,7 @@ def outdated_ready_captions(excluded: set[tuple[str, str]]) -> tuple[str, str] |
         rows = database.execute(
             """SELECT DISTINCT requests.video_id FROM requests
                JOIN ready_queue ON ready_queue.request_id = requests.id
-               WHERE requests.status = 'ready' AND ready_queue.position <= 10
+               WHERE requests.status IN ('ready', 'karaokezado') AND ready_queue.position <= 10
                ORDER BY ready_queue.position"""
         ).fetchall()
     for row in rows:
@@ -44,6 +60,14 @@ def outdated_ready_captions(excluded: set[tuple[str, str]]) -> tuple[str, str] |
             pass
         return video_id, generation
     return None
+
+
+def enqueue_ready_separations(database, generation: str) -> None:
+    database.execute(
+        "INSERT OR IGNORE INTO vocal_separation_jobs(generation, video_id) "
+        "SELECT DISTINCT ?, video_id FROM requests WHERE status = 'ready'",
+        (generation,),
+    )
 
 
 def process_next() -> bool:
@@ -88,11 +112,18 @@ def process_next() -> bool:
     else:
         with connection() as database:
             database.execute("BEGIN IMMEDIATE")
-            database.execute(
+            updated = database.execute(
                 "UPDATE requests SET status = 'ready', title = ? WHERE id = ? AND status = 'processing' "
                 "AND ? = (SELECT generation FROM party WHERE id=1)",
                 (title, item["id"], generation),
             )
+            if updated.rowcount:
+                database.execute(
+                    "INSERT INTO vocal_separation_jobs(generation, video_id) VALUES (?, ?) "
+                    "ON CONFLICT(generation, video_id) DO UPDATE SET status = 'pending' "
+                    "WHERE vocal_separation_jobs.status IN ('failed', 'skipped')",
+                    (generation, item["video_id"]),
+                )
     with connection() as database:
         current = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         if current == generation:
@@ -108,6 +139,7 @@ def main() -> None:
         database.execute("UPDATE requests SET status = 'pending' WHERE status = 'processing'")
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         recover_missing_media(database, generation)
+        enqueue_ready_separations(database, generation)
     for directory in MEDIA_ROOT.iterdir():
         if directory.is_dir() and directory.name not in {generation, "videos", "previews"}:
             shutil.rmtree(directory, ignore_errors=True)

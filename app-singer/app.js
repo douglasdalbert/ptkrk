@@ -396,7 +396,10 @@ function renderRequests(items) {
   const visibleItems = items;
   document.querySelector("#request-count").textContent = String(visibleItems.length);
   document.querySelector("#empty").hidden = visibleItems.length !== 0;
-  const statuses = { pending: "Em fila", processing: "Processando", ready: "Pronto", failed: "Falhou" };
+  const statuses = {
+    pending: "Em fila", processing: "Processando", ready: "Pronto",
+    karaokezado: "Karaokêzado", failed: "Falhou",
+  };
   const content = document.createDocumentFragment();
   for (const item of visibleItems) {
     const row = document.createElement("li");
@@ -426,7 +429,9 @@ function renderRequests(items) {
     const state = document.createElement("span");
     state.className = "state-icon";
     state.setAttribute("aria-hidden", "true");
-    state.textContent = { pending: "○", processing: "", ready: "✓", failed: "\u26A0\uFE0E" }[item.status] || "";
+    state.textContent = {
+      pending: "○", processing: "", ready: "✓", karaokezado: "♫", failed: "\u26A0\uFE0E",
+    }[item.status] || "";
     const stateText = document.createElement("span");
     stateText.textContent = statuses[item.status] || item.status;
     status.append(state, stateText);
@@ -1103,6 +1108,7 @@ function renderSearchButton(button) {
     pending: ["○", "Em fila"],
     processing: ["", "Processando"],
     ready: ["✓", "Pronto"],
+    karaokezado: ["♫", "Karaokêzado"],
     failed: ["\u26A0\uFE0E", "Tentar de novo"],
   };
   const [icon, text] = labels[state] || labels.idle;

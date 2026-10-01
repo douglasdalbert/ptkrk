@@ -169,6 +169,39 @@ services:
         - action: rebuild
           path: ./requirements.txt
 
+  separator:
+    build:
+      context: .
+      dockerfile: Dockerfile.separator
+    depends_on:
+      app-singer:
+        condition: service_healthy
+    environment:
+      KARAOKE_DB_PATH: /data/karaoke.sqlite3
+      KARAOKE_MEDIA_PATH: /media
+      KARAOKE_MODEL_PATH: /models
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    volumes:
+      - db_data:/data
+      - media_data:/media
+      - separator_models:/models
+    cpus: 0.7
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: rebuild
+          path: ./Dockerfile.separator
+        - action: rebuild
+          path: ./app/separation.py
+        - action: rebuild
+          path: ./app/storage.py
+        - action: rebuild
+          path: ./app/media.py
+
 volumes:
   db_data:
   media_data:
+  separator_models:

@@ -13,8 +13,9 @@ from app.captions import CAPTION_VERSION
 from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
 from app.media import create_preview, remove_unused_media
 from app.queue import enqueue_request
+from app.separation import claim_next_job, skip_pending_job
 from app.storage import connection, initialize
-from app.worker import outdated_ready_captions, process_next, recover_missing_media
+from app.worker import enqueue_ready_separations, outdated_ready_captions, process_next, recover_missing_media
 
 
 class YoutubeCodeTests(unittest.TestCase):
@@ -69,8 +70,41 @@ class WorkerTests(unittest.TestCase):
         captions.assert_called_once_with("dQw4w9WgXcQ", download.call_args.args[1])
         with connection() as database:
             row = database.execute("SELECT status, title FROM requests WHERE id = 'request'").fetchone()
+            separation = database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = "
+                "(SELECT generation FROM party WHERE id=1) AND video_id = 'dQw4w9WgXcQ'"
+            ).fetchone()
         self.assertEqual((row["status"], row["title"]), ("ready", "Minha música"))
+        self.assertEqual(separation["status"], "pending")
         self.assertFalse(process_next())
+
+    def test_separation_jobs_are_serial_and_pending_song_can_be_skipped(self):
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            database.execute(
+                "INSERT INTO requests(id, singer_id, video_id, status) "
+                "VALUES ('next', 'singer', 'glvVYIhdWlU', 'ready')"
+            )
+            enqueue_request(database, "next")
+            database.executemany(
+                "INSERT INTO vocal_separation_jobs(generation, video_id) VALUES (?, ?)",
+                [(generation, "dQw4w9WgXcQ"), (generation, "glvVYIhdWlU")],
+            )
+        self.assertEqual(claim_next_job(), {"generation": generation, "video_id": "dQw4w9WgXcQ"})
+        self.assertIsNone(claim_next_job())
+        with connection() as database:
+            skip_pending_job(database, generation, "glvVYIhdWlU")
+            database.execute(
+                "UPDATE vocal_separation_jobs SET status = 'done' WHERE generation = ? AND video_id = ?",
+                (generation, "dQw4w9WgXcQ"),
+            )
+        self.assertIsNone(claim_next_job())
+        with connection() as database:
+            self.assertEqual(database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (generation, "glvVYIhdWlU"),
+            ).fetchone()[0], "skipped")
 
     def test_old_ready_captions_are_eligible_for_refresh(self):
         with connection() as database:
@@ -87,6 +121,18 @@ class WorkerTests(unittest.TestCase):
             self.assertIsNone(outdated_ready_captions({(generation, "dQw4w9WgXcQ")}))
             captions.write_text(json.dumps({"version": CAPTION_VERSION}), encoding="utf-8")
             self.assertIsNone(outdated_ready_captions(set()))
+
+    def test_existing_ready_requests_are_added_to_separation_queue(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET status = 'ready' WHERE id = 'request'")
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            enqueue_ready_separations(database, generation)
+            enqueue_ready_separations(database, generation)
+            jobs = database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (generation, "dQw4w9WgXcQ"),
+            ).fetchall()
+        self.assertEqual([job["status"] for job in jobs], ["pending"])
 
     def test_failure_marks_request_failed(self):
         with patch("app.worker.download_video", side_effect=ValueError("Falha")):
@@ -113,20 +159,27 @@ class WorkerTests(unittest.TestCase):
             database.execute(
                 "INSERT INTO requests(id, singer_id, video_id) VALUES ('shared', 'singer', 'dQw4w9WgXcQ')"
             )
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id, status) VALUES (?, ?, 'done')",
+                (generation, "dQw4w9WgXcQ"),
+            )
             database.execute("UPDATE requests SET status = 'failed' WHERE id = 'request'")
         video = media_root / generation / "videos" / "dQw4w9WgXcQ.mp4"
         preview = media_root / generation / "previews" / "dQw4w9WgXcQ.jpg"
         analysis = media_root / generation / "analysis" / "dQw4w9WgXcQ.json"
         captions = media_root / generation / "captions" / "dQw4w9WgXcQ.json"
+        karaoke_video = media_root / generation / "karaoke_videos" / "dQw4w9WgXcQ.mp4"
         alternate_captions = media_root / generation / "captions" / "dQw4w9WgXcQ.automatic-track.json"
         video.parent.mkdir(parents=True)
         preview.parent.mkdir(parents=True)
         analysis.parent.mkdir(parents=True)
         captions.parent.mkdir(parents=True)
+        karaoke_video.parent.mkdir(parents=True)
         video.write_bytes(b"video")
         preview.write_bytes(b"preview")
         analysis.write_text("{}", encoding="utf-8")
         captions.write_text("{}", encoding="utf-8")
+        karaoke_video.write_bytes(b"karaoke video")
         alternate_captions.write_text("{}", encoding="utf-8")
 
         with patch("app.media.MEDIA_ROOT", media_root), patch("app.media.NODE_ENV", "development"):
@@ -144,7 +197,13 @@ class WorkerTests(unittest.TestCase):
             self.assertFalse(preview.exists())
             self.assertFalse(analysis.exists())
             self.assertFalse(captions.exists())
+            self.assertFalse(karaoke_video.exists())
             self.assertFalse(alternate_captions.exists())
+            with connection() as database:
+                self.assertEqual(database.execute(
+                    "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                    (generation, "dQw4w9WgXcQ"),
+                ).fetchone()[0], "skipped")
 
     def test_preview_requires_ready_request(self):
         with patch("app.main.MEDIA_ROOT", Path(self.directory.name)):
@@ -218,6 +277,28 @@ class WorkerTests(unittest.TestCase):
                 recover_missing_media(database, generation)
             self.assertEqual(database.execute("SELECT status FROM requests WHERE id='request'").fetchone()[0], "ready")
             self.assertEqual(database.execute("SELECT position FROM ready_queue WHERE request_id='request'").fetchone()[0], 1)
+
+    def test_missing_separated_video_falls_back_to_ready_and_requeues(self):
+        media_root = Path(self.directory.name) / "media"
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status='karaokezado' WHERE id='request'")
+            database.execute(
+                "INSERT INTO vocal_separation_jobs(generation, video_id, status) VALUES (?, ?, 'done')",
+                (generation, "dQw4w9WgXcQ"),
+            )
+            video = media_root / generation / "videos" / "dQw4w9WgXcQ.mp4"
+            video.parent.mkdir(parents=True)
+            video.write_bytes(b"original")
+            with patch("app.worker.MEDIA_ROOT", media_root):
+                recover_missing_media(database, generation)
+            self.assertEqual(database.execute(
+                "SELECT status FROM requests WHERE id='request'"
+            ).fetchone()[0], "ready")
+            self.assertEqual(database.execute(
+                "SELECT status FROM vocal_separation_jobs WHERE generation = ? AND video_id = ?",
+                (generation, "dQw4w9WgXcQ"),
+            ).fetchone()[0], "pending")
 
     def test_removal_during_download_cannot_restore_request(self):
         def cancel_during_download(video_id, generation):

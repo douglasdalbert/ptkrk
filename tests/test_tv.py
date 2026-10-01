@@ -102,6 +102,25 @@ class TvTests(unittest.TestCase):
         self.assertIsNone(self.client.get("/api/tv/state").json()["invitation"])
         self.assertEqual(self.client.get("/api/tv/song/video").status_code, 404)
 
+    def test_karaokezado_status_serves_instrumental_video(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET status = 'karaokezado' WHERE id = 'song'")
+        original = Path(self.directory.name) / generation / "videos" / "glvVYIhdWlU.mp4"
+        separated = Path(self.directory.name) / generation / "karaoke_videos" / "glvVYIhdWlU.mp4"
+        original.parent.mkdir(parents=True)
+        separated.parent.mkdir(parents=True)
+        original.write_bytes(b"original")
+        separated.write_bytes(b"instrumental")
+        self.assertEqual(
+            self.client.post("/api/tv/start", headers=self.tv_headers).json()["invitation"]["request_id"],
+            "song",
+        )
+        self.assertEqual(self.client.get("/api/tv/song/video").content, b"instrumental")
+        separated.unlink()
+        self.assertEqual(self.client.get("/api/tv/song/video").content, b"original")
+
     def test_websocket_scores_caption_onset_and_penalizes_sound_outside_cues(self):
         identity = self.client.post("/api/singers", json={"name": "Cantor do teste"}).json()
         with connection() as database:
