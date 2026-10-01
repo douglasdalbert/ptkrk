@@ -14,7 +14,11 @@ const sendingVideos = new Map();
 let searchGeneration = 0;
 const requestList = document.querySelector("#request-list");
 const previewCache = new Map();
-const acknowledgedFailures = new Set();
+const knownVideoTitles = new Map();
+const failureAlert = document.querySelector("#failure-alert");
+const failureMessage = document.querySelector("#failure-message");
+const failureRetry = document.querySelector("#failure-retry");
+const failureGiveUp = document.querySelector("#failure-give-up");
 const invitationView = document.querySelector("#invitation");
 const acceptButton = document.querySelector("#accept-button");
 const groupButton = document.querySelector("#group-button");
@@ -49,7 +53,6 @@ let joinedGroupRooms = new Set();
 let groupRoomReady = false;
 let groupPollTimer = null;
 let pendingGroupPrompt = null;
-let failureAlertActive = false;
 let playbackClock = null;
 let microphoneStream = null;
 let microphoneContext = null;
@@ -82,7 +85,6 @@ const loudnessWindowMs = 250;
 const loudnessBaselineWindows = 20;
 const loudnessSurgeFrames = 12;
 const boostRequestCooldownMs = 3000;
-const failedRequestAlertDurationMs = 10000;
 const errorTimers = new WeakMap();
 
 function stopMicrophone() {
@@ -161,7 +163,6 @@ function clearSession() {
   clearInterval(groupPollTimer);
   groupPollTimer = null;
   pendingGroupPrompt = null;
-  acknowledgedFailures.clear();
   if (singingOverlay.open) singingOverlay.close();
   invitationView.hidden = true;
   skippingView.hidden = true;
@@ -173,8 +174,8 @@ function clearSession() {
     message.textContent = "";
   }
   document.querySelector("#entry-error").hidden = true;
-  document.querySelector("#failure-alert").hidden = true;
-  document.querySelector("#failure-alert").textContent = "";
+  failureAlert.hidden = true;
+  failureMessage.textContent = "";
   document.querySelector("#sign-out").hidden = true;
   document.querySelector("#identity-label").textContent = "/ CANTOR";
   localStorage.removeItem(storageKey);
@@ -392,9 +393,7 @@ function previewFor(item, placeholder) {
 }
 
 function renderRequests(items) {
-  const visibleItems = items.filter(item => item.status !== "failed" ||
-    ((item.singer_id === singer?.singer_id || item.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.joined === 1)) &&
-      !acknowledgedFailures.has(item.id)));
+  const visibleItems = items;
   document.querySelector("#request-count").textContent = String(visibleItems.length);
   document.querySelector("#empty").hidden = visibleItems.length !== 0;
   const statuses = { pending: "Em fila", processing: "Processando", ready: "Pronto", failed: "Falhou" };
@@ -477,33 +476,39 @@ function renderRequests(items) {
 
 function showFailedRequest(items) {
   latestItems = items;
-  if (!singer || failureAlertActive) return;
+  if (!singer) return;
   const failed = items.find(item => item.status === "failed" &&
-    (item.singer_id === singer.singer_id || item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1)) &&
-    !acknowledgedFailures.has(item.id));
-  if (!failed) return;
-  const owner = singer;
-  failureAlertActive = true;
-  (async () => {
-    const alert = document.querySelector("#failure-alert");
-    alert.textContent = `Não foi possível preparar "${failed.title || `youtube.com/watch?v=${failed.video_id}`}". ${failed.error || "O vídeo não pôde ser preparado."}`;
-    alert.hidden = false;
-    try {
-      await new Promise(resolve => setTimeout(resolve, failedRequestAlertDurationMs));
-      if (singer !== owner) return;
-      acknowledgedFailures.add(failed.id);
-      alert.hidden = true;
-      alert.textContent = "";
-      renderRequests(latestItems);
-      await api(`/api/requests/${encodeURIComponent(failed.id)}`, { method: "DELETE" });
-    } catch (problem) {
-      if (singer === owner) showError(document.querySelector("#request-message"), problem.message);
-    } finally {
-      failureAlertActive = false;
-      if (singer === owner) showFailedRequest(latestItems);
-    }
-  })();
+    item.singer_id === singer.singer_id);
+  if (!failed) {
+    failureAlert.hidden = true;
+    return;
+  }
+  const title = failed.title || knownVideoTitles.get(failed.video_id) || `Vídeo do YouTube (${failed.video_id})`;
+  failureMessage.textContent = `Não foi possível preparar "${title}". ${failed.error || "O vídeo não pôde ser preparado."}`;
+  failureAlert.hidden = false;
+  failureRetry.dataset.requestId = failed.id;
+  failureGiveUp.dataset.requestId = failed.id;
+  failureRetry.disabled = false;
+  failureGiveUp.disabled = false;
 }
+
+async function resolveFailedRequest(button, action) {
+  const requestId = button.dataset.requestId;
+  if (!requestId) return;
+  button.disabled = true;
+  try {
+    await api(action === "retry"
+      ? `/api/requests/${encodeURIComponent(requestId)}/retry`
+      : `/api/requests/${encodeURIComponent(requestId)}`, { method: action === "retry" ? "POST" : "DELETE" });
+    failureAlert.hidden = true;
+  } catch (problem) {
+    showError(document.querySelector("#request-message"), problem.message);
+    button.disabled = false;
+  }
+}
+
+failureRetry.addEventListener("click", () => resolveFailedRequest(failureRetry, "retry"));
+failureGiveUp.addEventListener("click", () => resolveFailedRequest(failureGiveUp, "give-up"));
 
 function renderInvitation(invitation, items) {
   if (!invitation || !singer || !items.some((item) => item.id === invitation.request_id &&
@@ -1080,7 +1085,7 @@ function formatDuration(seconds) {
 }
 
 function myRequestFor(videoId) {
-  const mine = latestItems.filter(item => item.video_id === videoId && !acknowledgedFailures.has(item.id) &&
+  const mine = latestItems.filter(item => item.video_id === videoId &&
     (item.singer_id === singer?.singer_id ||
       item.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.joined === 1)));
   return mine.find(item => item.status !== "failed") || mine[0] || null;
@@ -1120,6 +1125,12 @@ function renderSearchButtons() {
 
 async function selectVideo(video, status) {
   if (sendingVideos.has(video.video_id)) return;
+  const existing = myRequestFor(video.video_id);
+  if (existing?.status === "failed" && existing.singer_id === singer?.singer_id) {
+    const button = searchDialog.querySelector(`.search-select[data-video-id="${CSS.escape(video.video_id)}"]`);
+    if (button) await resolveFailedRequest(button, "retry");
+    return;
+  }
   sendingVideos.set(video.video_id, null);
   renderSearchButtons();
   clearError(status);
@@ -1158,6 +1169,7 @@ function renderSearchResults(kind, items) {
   const status = document.querySelector(`#${kind}-status`);
   const content = document.createDocumentFragment();
   for (const video of items) {
+    knownVideoTitles.set(video.video_id, video.title);
     const row = document.createElement("li");
     row.className = "search-item";
     const media = document.createElement("div");

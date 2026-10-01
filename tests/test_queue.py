@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.main import remove_request, request_snapshot
+from app.main import remove_request, request_snapshot, retry_request
 from app.queue import enqueue_request
 from app.storage import connection, initialize
 
@@ -107,6 +107,20 @@ class QueueTests(unittest.TestCase):
             )
         remove_request("A1", "A")
         self.assertEqual(request_snapshot(), [])
+
+    def test_owner_can_retry_failed_request_without_changing_id(self):
+        with connection() as database:
+            database.execute(
+                "INSERT INTO requests(id, singer_id, video_id, status, error) "
+                "VALUES ('A1', 'A', 'glvVYIhdWlU', 'failed', 'Falha')"
+            )
+        self.assertEqual(retry_request("A1", "A"), {"status": "pending"})
+        item = next(item for item in request_snapshot() if item["id"] == "A1")
+        self.assertEqual(item["status"], "pending")
+        self.assertIsNone(item["error"])
+        with self.assertRaises(HTTPException) as wrong_owner:
+            retry_request("A1", "B")
+        self.assertEqual(wrong_owner.exception.status_code, 404)
 
 
 if __name__ == "__main__":

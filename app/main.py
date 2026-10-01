@@ -983,6 +983,24 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
     return {"id": request_id, "status": "pending", "video_id": video_id}
 
 
+@app.post("/api/requests/{request_id}/retry", status_code=202)
+def retry_request(request_id: str, singer_id: str = Depends(authenticated_singer)) -> dict[str, str]:
+    with connection() as database:
+        database.execute("BEGIN IMMEDIATE")
+        request = database.execute(
+            "SELECT singer_id, status FROM requests WHERE id = ?", (request_id,)
+        ).fetchone()
+        if request is None or request["singer_id"] != singer_id:
+            raise HTTPException(404, "Pedido não encontrado")
+        if request["status"] != "failed":
+            raise HTTPException(409, "Este pedido não está com falha")
+        database.execute(
+            "UPDATE requests SET status = 'pending', error = NULL WHERE id = ?", (request_id,)
+        )
+        enqueue_request(database, request_id)
+    return {"status": "pending"}
+
+
 @app.get("/api/search")
 def search_videos(q: str = Query(min_length=2, max_length=100),
                   kind: Literal["captions", "karaoke"] = "captions",

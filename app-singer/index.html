@@ -62,7 +62,13 @@
         </section>
       </main>
     </div>
-    <p id="failure-alert" class="failure-alert" role="alert" aria-live="assertive" hidden></p>
+    <div id="failure-alert" class="failure-alert" role="alert" aria-live="assertive" hidden>
+      <p id="failure-message"></p>
+      <div class="failure-actions">
+        <button id="failure-retry" class="primary" type="button">Tentar novamente</button>
+        <button id="failure-give-up" class="failure-give-up" type="button">Desistir</button>
+      </div>
+    </div>
     <dialog id="singing-overlay" class="singing-overlay" aria-labelledby="singing-title">
       <span class="singing-note" aria-hidden="true">♫</span>
       <strong id="singing-title">Você está cantando</strong>

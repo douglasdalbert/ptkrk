@@ -151,6 +151,12 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .player-close { position: absolute; z-index: 1; top: max(8px, env(safe-area-inset-top)); right: 8px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: #000000b0; color: #fff; font-size: 28px; line-height: 1; }
 .player-close:hover, .player-close:focus-visible { background: var(--pink); color: #19080e; outline: none; }
 .failure-alert { position: fixed; z-index: 30; top: max(16px, env(safe-area-inset-top)); left: 16px; right: 16px; max-width: 688px; margin: 0 auto; padding: 12px 14px; border-left: 3px solid var(--danger); border-radius: 3px; background: #351c21f2; color: var(--text); box-shadow: 0 8px 28px #0009; font-size: 13px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.failure-alert p { margin: 0; }
+.failure-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.failure-actions button { min-height: 38px; padding: 0 12px; border: 0; border-radius: 4px; font-size: 12px; font-weight: 800; }
+.failure-actions .primary { min-height: 38px; }
+.failure-give-up { background: transparent; color: var(--text); border: 1px solid var(--border) !important; }
+.failure-give-up:hover, .failure-give-up:focus-visible { border-color: var(--pink) !important; color: var(--pink); }
 .singing-overlay { position: fixed; inset: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; place-content: center; justify-items: center; gap: 18px; padding: 24px; background: #111216f5; color: var(--text); text-align: center; touch-action: none; }
 .singing-overlay[open] { display: grid; }
 .singing-overlay::backdrop { background: #111216; }
