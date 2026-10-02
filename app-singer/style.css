@@ -113,9 +113,9 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .search-bar .primary { min-height: 46px; padding-inline: 14px; }
 .search-close { flex: none; width: 40px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 30px; line-height: 1; }
 .search-close:hover, .search-close:focus-visible { color: var(--text); background: #ffffff10; }
-.search-area { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; border-bottom: 1px solid var(--border); }
-.search-area:last-child { padding-bottom: env(safe-area-inset-bottom); border-bottom: 0; }
-.search-area-heading { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px 6px; }
+.search-area { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; margin: 8px 12px; border: 1px solid var(--border); border-radius: 4px; }
+.search-area:last-child { padding-bottom: env(safe-area-inset-bottom); }
+.search-area-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 10px 12px 6px; }
 .search-area-heading h2 { margin: 0; font-size: 15px; }
 .search-area-heading span { color: var(--muted); font-size: 11px; }
 .search-area:first-of-type h2 { color: var(--lime); }
