@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 import qrcode
 
 from app.invitations import accept_invitation, apply_skip, finish_song, invitation_state, schedule_skip, skip_state, start_invitation
-from app.captions import caption_track_path, selected_caption_path
+from app.captions import available_caption_tracks, caption_track_path, selected_caption_path
 from app.scoring import (
     block_duration_ms,
     boost_duration_ms,
@@ -221,8 +221,11 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
             if captions and captions.is_file():
                 try:
                     bundle = json.loads(caption_track_path(generation, current_video["video_id"]).read_text(encoding="utf-8"))
-                    caption_tracks = bundle.get("tracks", [])
-                    active_caption_track_id = current_video["caption_track_id"] or bundle.get("default_track_id")
+                    caption_tracks = available_caption_tracks(generation, current_video["video_id"], bundle)
+                    selected_id = current_video["caption_track_id"] or bundle.get("default_track_id")
+                    active_caption_track_id = selected_id if any(
+                        track["id"] == selected_id for track in caption_tracks
+                    ) else None
                 except (OSError, json.JSONDecodeError):
                     pass
             if include_caption_bars and captions and captions.is_file():
@@ -822,7 +825,7 @@ def tv_select_caption_track(request_id: str, selection: CaptionTrackSelection) -
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             raise HTTPException(404, "Legendas indisponíveis")
-        track_ids = {track.get("id") for track in bundle.get("tracks", [])}
+        track_ids = {track["id"] for track in available_caption_tracks(generation, item["video_id"], bundle)}
         if selection.track_id not in track_ids:
             raise HTTPException(404, "Legenda indisponível")
         active_track_id = item["caption_track_id"] or bundle.get("default_track_id")
@@ -884,10 +887,13 @@ def tv_media(request_id: str, kind: str) -> Response:
         except (OSError, json.JSONDecodeError):
             raise HTTPException(404, "Mídia indisponível")
         bars = usable_caption_bars(captions)
+        tracks = available_caption_tracks(generation, item["video_id"], bundle)
+        track_ids = {track["id"] for track in tracks}
         return JSONResponse({**captions, "bars": bars, "cues": bars, "bar_count": len(bars),
-                             "cue_count": len(bars), "tracks": bundle.get("tracks", []),
-                             "default_track_id": bundle.get("default_track_id"),
-                             "selected_track_id": selected_id})
+                             "cue_count": len(bars), "tracks": tracks,
+                             "default_track_id": bundle.get("default_track_id")
+                             if bundle.get("default_track_id") in track_ids else None,
+                             "selected_track_id": selected_id if selected_id in track_ids else None})
     category, suffix = {
         "video": ("videos", ".mp4"),
         "preview": ("previews", ".jpg"),

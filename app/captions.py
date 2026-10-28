@@ -132,6 +132,22 @@ def selected_caption_path(generation: str, video_id: str, track_id: str | None =
     return bundle if track_id == default_id else caption_track_path(generation, video_id, track_id)
 
 
+def available_caption_tracks(generation: str, video_id: str, bundle: dict) -> list[dict]:
+    tracks = []
+    for track in bundle.get("tracks", []):
+        if track["id"] == bundle.get("default_track_id"):
+            captions = bundle
+        else:
+            path = caption_track_path(generation, video_id, track["id"])
+            try:
+                captions = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+        if usable_caption_bars(captions):
+            tracks.append(track)
+    return tracks
+
+
 def parse_vtt_caption_bars(
     text: str,
     duration_ms: int,

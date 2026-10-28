@@ -116,6 +116,50 @@ class TvTests(unittest.TestCase):
             self.assertEqual(len(response["bars"]), 0 if mode == "vocal" else 1)
             self.assertEqual(response["bar_count"], len(response["bars"]))
 
+    def test_caption_options_exclude_sparse_tracks_and_reject_direct_selection(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+        directory = Path(self.directory.name) / generation / "captions"
+        directory.mkdir(parents=True)
+        bundle = {"duration_ms": 100000, "default_track_id": "sparse", "tracks": [
+            {"id": "sparse", "label": "Incompleta"},
+            {"id": "empty", "label": "Vazia"},
+            {"id": "valid", "label": "Utilizável"},
+        ], "bars": [{"block_index": 0, "text": "Verso", "start_ms": 0, "end_ms": 14999}]}
+        (directory / "glvVYIhdWlU.json").write_text(json.dumps(bundle), encoding="utf-8")
+        (directory / "glvVYIhdWlU.empty.json").write_text(
+            '{"duration_ms":100000,"bars":[]}', encoding="utf-8"
+        )
+        (directory / "glvVYIhdWlU.valid.json").write_text(json.dumps({
+            "duration_ms": 100000,
+            "bars": [{"block_index": 0, "text": "Verso completo", "start_ms": 0, "end_ms": 15000}],
+        }), encoding="utf-8")
+        with patch.dict("os.environ", {"KARAOKE_CAPTION_MIN_COVERAGE_PERCENT": "15"}):
+            state = self.client.get("/api/tv/state").json()
+            self.assertEqual([track["id"] for track in state["caption_tracks"]], ["valid"])
+            self.assertIsNone(state["caption_track_id"])
+            self.assertEqual(state["scoring_mode"], "vocal")
+            media = self.client.get("/api/tv/song/captions").json()
+            self.assertEqual([track["id"] for track in media["tracks"]], ["valid"])
+            self.assertIsNone(media["default_track_id"])
+            self.assertIsNone(media["selected_track_id"])
+            for track_id in ("sparse", "empty"):
+                response = self.client.post("/api/tv/song/caption-track", headers=self.tv_headers,
+                                            json={"track_id": track_id})
+                self.assertEqual(response.status_code, 404)
+            self.assertEqual(self.client.post("/api/tv/song/caption-track", headers=self.tv_headers,
+                                              json={"track_id": "valid"}).status_code, 200)
+            self.assertEqual(self.client.get("/api/tv/state").json()["scoring_mode"], "captions")
+        with patch.dict("os.environ", {"KARAOKE_CAPTION_MIN_COVERAGE_PERCENT": "16"}):
+            state = self.client.get("/api/tv/state").json()
+            self.assertEqual(state["caption_tracks"], [])
+            self.assertIsNone(state["caption_track_id"])
+            self.assertEqual(self.client.get("/api/tv/song/captions").json()["tracks"], [])
+
     def test_vocal_socket_calibrates_scores_reconnects_and_rejects_caption_mode(self):
         identity = self.client.post("/api/singers", json={"name": "Constância"}).json()
         with connection() as database:
@@ -391,7 +435,7 @@ class TvTests(unittest.TestCase):
         }
         (captions_dir / "glvVYIhdWlU.json").write_text(json.dumps(manifest), encoding="utf-8")
         (captions_dir / "glvVYIhdWlU.manual-alternative.json").write_text(json.dumps({
-            "bars": [{"text": "alternativa", "start_ms": 0, "end_ms": 1000}],
+            "bars": [{"text": "alternativa", "start_ms": 0, "end_ms": 2000}],
             "duration_ms": 10000,
         }), encoding="utf-8")
         self.assertEqual(self.client.get("/api/tv/song/captions").json()["bars"][0]["text"], "default")

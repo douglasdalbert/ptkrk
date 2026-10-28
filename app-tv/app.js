@@ -370,7 +370,7 @@ async function loadCaptionBars(requestId) {
 }
 
 function renderCaptionOptions(tracks, selectedTrackId) {
-  captionSwitcher.hidden = tracks.length <= 1;
+  captionSwitcher.hidden = !tracks.length || (tracks.length === 1 && tracks[0].id === selectedTrackId);
   captionOptions.replaceChildren(...tracks.map(track => {
     const button = document.createElement("button");
     button.type = "button";
