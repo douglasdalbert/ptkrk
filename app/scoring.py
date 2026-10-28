@@ -32,6 +32,10 @@ def caption_history_ms() -> int:
     return integer_setting("KARAOKE_CAPTION_HISTORY_MS", 60000, 1000, 600000)
 
 
+def caption_min_coverage_percent() -> int:
+    return integer_setting("KARAOKE_CAPTION_MIN_COVERAGE_PERCENT", 15, 0, 100)
+
+
 def caption_repeat_percent() -> int:
     return integer_setting("KARAOKE_CAPTION_REPEAT_PERCENT", 70, 0, 100)
 
@@ -97,15 +101,27 @@ def boost_multiplier() -> float:
 
 
 def usable_caption_bars(captions: dict) -> list[dict]:
-    return [
+    bars = [
         bar for bar in captions.get("bars", [])
         if "text" not in bar or (isinstance(bar["text"], str) and bar["text"].strip())
     ]
+    duration = captions.get("duration_ms", 0)
+    if duration <= 0 or not bars:
+        return bars
+    intervals = sorted(
+        (max(0, bar["start_ms"]), min(duration, bar["end_ms"]))
+        for bar in bars if "start_ms" in bar and "end_ms" in bar
+    )
+    covered, last_end = 0, 0
+    for start, end in intervals:
+        covered += max(0, end - max(start, last_end))
+        last_end = max(last_end, end)
+    return bars if covered * 100 >= duration * caption_min_coverage_percent() else []
 
 
 def matching_block(bars: list[dict], position_ms: int) -> int | None:
     matches = [
-        bar for bar in bars
+        bar for bar in usable_caption_bars({"bars": bars})
         if bar["score_window_start_ms"] <= position_ms <= bar["score_window_end_ms"]
     ]
     if not matches:

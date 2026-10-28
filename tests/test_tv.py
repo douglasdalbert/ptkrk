@@ -104,6 +104,14 @@ class TvTests(unittest.TestCase):
         self.assertEqual(state["scoring_mode"], "vocal")
         self.assertEqual(main_module.party_snapshot(include_caption_bars=True)["active_bars"], [])
         self.assertEqual(self.client.get("/api/tv/song/captions").json()["bars"], [])
+        for covered_ms, mode in [(26999, "vocal"), (27000, "captions")]:
+            captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
+                {"block_index": 0, "text": "Verso", "start_ms": 0, "end_ms": covered_ms},
+            ]}), encoding="utf-8")
+            self.assertEqual(self.client.get("/api/tv/state").json()["scoring_mode"], mode)
+            response = self.client.get("/api/tv/song/captions").json()
+            self.assertEqual(len(response["bars"]), 0 if mode == "vocal" else 1)
+            self.assertEqual(response["bar_count"], len(response["bars"]))
 
     def test_vocal_socket_calibrates_scores_reconnects_and_rejects_caption_mode(self):
         identity = self.client.post("/api/singers", json={"name": "Constância"}).json()

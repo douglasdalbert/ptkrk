@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.scoring import finalize_performance, score_snapshot, scoreboard_snapshot
+from app.scoring import finalize_performance, record_block_result, score_snapshot, scoreboard_snapshot, usable_caption_bars
 from app.storage import connection, initialize
 from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_useful_percent
 
@@ -122,6 +122,48 @@ class VocalTests(unittest.TestCase):
         self.captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
             {"block_index": index, "text": text, "start_ms": index * 1000, "end_ms": (index + 1) * 1000}
             for index, text in enumerate(["", "  ", "\n\t", None])
+        ]}), encoding="utf-8")
+        self.assertFalse(has_timed_captions(self.captions))
+        self.calibrate()
+        self.assertEqual(self.sample(31000)["result"], "hit")
+        self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["mode"], "vocal")
+
+    def test_mixed_captions_ignore_empty_blocks_and_preserve_valid_indices(self):
+        self.captions.write_text(json.dumps({"duration_ms": 10000, "bars": [
+            {"block_index": index, "text": text, "start_ms": index * 1000, "end_ms": (index + 1) * 1000}
+            for index, text in enumerate(["", "Primeiro verso", " \t ", "Segundo verso"])
+        ]}), encoding="utf-8")
+        self.assertTrue(has_timed_captions(self.captions))
+        self.assertIsNone(self.sample(31000))
+        self.assertIsNone(record_block_result(self.database, "r", "s", "empty", 0, True, self.captions))
+        first = record_block_result(self.database, "r", "s", "first", 1, True, self.captions)
+        self.assertEqual(first["total_blocks"], 2)
+        self.assertEqual(first["points"], 500)
+        second = record_block_result(self.database, "r", "s", "second", 3, True, self.captions)
+        self.assertEqual(second["points"], 1000)
+        self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["total_blocks"], 2)
+
+    def test_caption_coverage_threshold_boundaries_overlap_and_configuration(self):
+        for covered, accepted in [(1499, False), (1500, True), (1501, True)]:
+            with self.subTest(covered=covered):
+                captions = {"duration_ms": 10000, "bars": [
+                    {"text": "Verso", "start_ms": 0, "end_ms": covered},
+                ]}
+                self.assertEqual(bool(usable_caption_bars(captions)), accepted)
+        captions = {"duration_ms": 10000, "bars": [
+            {"text": "Verso", "start_ms": -500, "end_ms": 1000},
+            {"text": "Repetido", "start_ms": 0, "end_ms": 1000},
+            {"text": " ", "start_ms": 1000, "end_ms": 10000},
+        ]}
+        self.assertEqual(usable_caption_bars(captions), [])
+        with patch.dict("os.environ", {"KARAOKE_CAPTION_MIN_COVERAGE_PERCENT": "10"}):
+            self.assertEqual(len(usable_caption_bars(captions)), 2)
+        with patch.dict("os.environ", {"KARAOKE_CAPTION_MIN_COVERAGE_PERCENT": "0"}):
+            self.assertEqual(len(usable_caption_bars(captions)), 2)
+
+    def test_sparse_caption_file_uses_vocal_calibration_and_score(self):
+        self.captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
+            {"block_index": 0, "text": "Verso", "start_ms": 120000, "end_ms": 143000},
         ]}), encoding="utf-8")
         self.assertFalse(has_timed_captions(self.captions))
         self.calibrate()

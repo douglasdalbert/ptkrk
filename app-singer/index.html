@@ -71,6 +71,7 @@
       </div>
     </div>
     <dialog id="singing-overlay" class="singing-overlay" aria-labelledby="singing-title">
+      <button id="singer-boost-button" class="boost-button singer-boost-button" type="button" disabled hidden>Ativar especial</button>
       <span class="singing-note" aria-hidden="true">♫</span>
       <strong id="singing-title">Você está cantando</strong>
       <p id="score-status" role="status">Ative o microfone para começar a pontuar.</p>
@@ -115,12 +116,12 @@
         <button id="search-close" class="search-close" type="button" aria-label="Fechar busca" title="Fechar busca">×</button>
       </form>
       <section class="search-area" aria-labelledby="captioned-title">
-        <header class="search-area-heading"><h2 id="captioned-title">Playback</h2><span>(com pontuação)</span></header>
+        <header class="search-area-heading"><h2 id="captioned-title">Playback</h2></header>
         <p id="captioned-status" class="search-status" role="status"></p>
         <ol id="captioned-results" class="search-results"></ol>
       </section>
       <section class="search-area" aria-labelledby="karaoke-title">
-        <header class="search-area-heading"><h2 id="karaoke-title">Karaokê</h2><span>(Solta a voz! — sem legenda)</span></header>
+        <header class="search-area-heading"><h2 id="karaoke-title">Karaokê</h2></header>
         <p id="karaoke-status" class="search-status" role="status"></p>
         <ol id="karaoke-results" class="search-results"></ol>
       </section>

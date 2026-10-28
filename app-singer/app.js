@@ -32,6 +32,7 @@ const skippingView = document.querySelector("#skipping");
 const singingOverlay = document.querySelector("#singing-overlay");
 const microphoneButton = document.querySelector("#microphone-button");
 const boostButton = document.querySelector("#boost-button");
+const singerBoostButton = document.querySelector("#singer-boost-button");
 const microphoneWaveform = document.querySelector("#microphone-waveform");
 const microphonePermissionButton = document.querySelector("#microphone-permission-button");
 const microphonePermissionStatus = document.querySelector("#microphone-permission-status");
@@ -776,6 +777,18 @@ function sendBoostRequest(requestId) {
   socket.send(JSON.stringify({ type: "boost_request", request_id: requestId, event_id: crypto.randomUUID() }));
 }
 
+singerBoostButton.addEventListener("click", () => {
+  if (singerBoostButton.disabled || singerBoostButton.hidden || scoringMode !== "captions") return;
+  if (socket?.readyState !== WebSocket.OPEN) {
+    scoreStatus.textContent = "Aguardando conexão para ativar o especial.";
+    return;
+  }
+  sendBoostRequest(currentSong?.id);
+  singerBoostButton.disabled = true;
+  singerBoostButton.dataset.ready = "false";
+  scoreStatus.textContent = "Ativação do especial solicitada!";
+});
+
 boostButton.addEventListener("click", () => {
   if (!currentSong) return;
   sendBoostRequest(currentSong.id);
@@ -1063,6 +1076,15 @@ function renderSkip(message) {
     currentSong.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
   boostButton.hidden = scoringMode === "vocal" || !message.invitation?.accepted || !currentSong || !!participant || !!currentSkip;
   const boostReady = !!message.boost_ready && !message.boost_active;
+  const eligible = currentSong && singer && (currentSong.singer_id === singer.singer_id ?
+    message.invitation?.lead_accepted : currentSong.backvocals.some(vocal =>
+      vocal.singer_id === singer.singer_id && vocal.joined === 1 && vocal.accepted && vocal.score_eligible));
+  singerBoostButton.hidden = scoringMode !== "captions" || !message.invitation?.accepted ||
+    !participant || !eligible || !!currentSkip;
+  singerBoostButton.disabled = !boostReady;
+  singerBoostButton.dataset.ready = String(boostReady);
+  singerBoostButton.textContent = message.boost_active ? "Especial ativo!" :
+    boostReady ? "Ativar especial" : "Carregando especial...";
   boostButton.disabled = !boostReady;
   boostButton.dataset.ready = String(boostReady);
   skippingView.hidden = !currentSkip;

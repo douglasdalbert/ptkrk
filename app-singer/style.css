@@ -159,6 +159,7 @@ input:focus-visible { border-color: var(--lime); box-shadow: 0 0 0 2px #c7fa4530
 .failure-give-up:hover, .failure-give-up:focus-visible { border-color: var(--pink) !important; color: var(--pink); }
 .singing-overlay { position: fixed; inset: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; place-content: center; justify-items: center; gap: 18px; padding: 24px; background: #111216f5; color: var(--text); text-align: center; touch-action: none; }
 .singing-overlay[open] { display: grid; }
+.singer-boost-button { position:absolute; top:calc(16px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); width:min(320px,88vw); min-height:48px; padding:10px 16px; border:1px solid var(--pink); border-radius:6px; font-weight:800; }
 .singing-overlay::backdrop { background: #111216; }
 .singing-note { display: grid; width: 132px; height: 132px; place-items: center; border: 3px solid var(--lime); border-radius: 50%; color: var(--pink); font-family: Georgia, serif; font-size: 88px; line-height: 1; box-shadow: 0 0 42px #c7fa4538; animation: singing-pulse 1.8s ease-in-out infinite; }
 .singing-overlay strong { font-family: Georgia, serif; font-size: 28px; font-weight: 400; }

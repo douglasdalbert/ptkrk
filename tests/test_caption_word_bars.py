@@ -4,6 +4,18 @@ from app.captions import parse_vtt_caption_bars, points_for_caption_onset, selec
 
 
 class CaptionWordBarTests(unittest.TestCase):
+    def test_empty_cues_between_lyrics_never_become_display_or_score_blocks(self):
+        result = parse_vtt_caption_bars(
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n \t \n\n"
+            "00:00:02.000 --> 00:00:03.000\nPrimeiro verso\n\n"
+            "00:00:04.000 --> 00:00:05.000\n<i> </i>\n\n"
+            "00:00:06.000 --> 00:00:07.000\nSegundo verso\n",
+            8000,
+        )
+        self.assertEqual([bar["text"] for bar in result["bars"]], ["Primeiro verso", "Segundo verso"])
+        self.assertEqual([bar["block_index"] for bar in result["bars"]], [0, 1])
+        self.assertEqual(result["bar_count"], 2)
+
     def test_native_caption_language_prefers_original_variant(self):
         metadata = {
             "language": "en-US",

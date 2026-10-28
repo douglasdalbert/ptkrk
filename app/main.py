@@ -883,7 +883,9 @@ def tv_media(request_id: str, kind: str) -> Response:
             captions = json.loads(selected_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             raise HTTPException(404, "Mídia indisponível")
-        return JSONResponse({**captions, "bars": usable_caption_bars(captions), "tracks": bundle.get("tracks", []),
+        bars = usable_caption_bars(captions)
+        return JSONResponse({**captions, "bars": bars, "cues": bars, "bar_count": len(bars),
+                             "cue_count": len(bars), "tracks": bundle.get("tracks", []),
                              "default_track_id": bundle.get("default_track_id"),
                              "selected_track_id": selected_id})
     category, suffix = {

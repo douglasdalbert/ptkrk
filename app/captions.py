@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 from yt_dlp import YoutubeDL
 
 from app.media import MEDIA_ROOT
-from app.scoring import block_duration_ms, caption_history_ms, caption_repeat_percent, onset_tolerance_ms as configured_onset_tolerance_ms
+from app.scoring import block_duration_ms, caption_history_ms, caption_repeat_percent, onset_tolerance_ms as configured_onset_tolerance_ms, usable_caption_bars
 
 TIMESTAMP = re.compile(
     r"(?P<start>\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+"
@@ -231,7 +231,7 @@ def parse_vtt_caption_bars(
 
 
 def points_for_caption_onset(bar: dict, observed_onset_ms: int) -> float:
-    if bar["score_window_start_ms"] <= observed_onset_ms <= bar["score_window_end_ms"]:
+    if usable_caption_bars({"bars": [bar]}) and bar["score_window_start_ms"] <= observed_onset_ms <= bar["score_window_end_ms"]:
         return bar["score_duration_ms"] / 1000
     return 0.0
 
@@ -257,6 +257,9 @@ def create_caption_bars(
                     and cached.get("repeat_percent") == repeat_percent
                     and isinstance(cached.get("tracks"), list)
                     and isinstance(cached.get("bars"), list)):
+                cached["bars"] = usable_caption_bars(cached)
+                cached["cues"] = cached["bars"]
+                cached["bar_count"] = cached["cue_count"] = len(cached["bars"])
                 return cached
         except (OSError, json.JSONDecodeError):
             pass
