@@ -553,6 +553,7 @@ function render(snapshot) {
   scoringMode = snapshot.scoring_mode;
   vocalCalibrationMs = snapshot.vocal_calibration_ms ?? 20000;
   development = snapshot.development === true;
+  document.querySelector("#current-score-action").hidden = !development;
   testPugButton.hidden = !development;
   if (!development) pugPreview = -1;
   boostBar.style.visibility = scoringMode === "vocal" ? "hidden" : "";

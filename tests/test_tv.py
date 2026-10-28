@@ -82,7 +82,10 @@ class TvTests(unittest.TestCase):
             self.assertEqual(state["vocal_calibration_ms"], 15000)
             self.assertEqual(state["vocal_useful_percent"], 75)
             self.assertTrue(state["development"])
+            self.assertNotIn("show_live_score", state)
         with patch.dict("os.environ", {"NODE_ENV": "production"}):
+            self.assertFalse(self.client.get("/api/tv/state").json()["development"])
+        with patch.dict("os.environ", {"NODE_ENV": " Production "}):
             self.assertFalse(self.client.get("/api/tv/state").json()["development"])
         self.assertIn('id="current-score-action" type="button" disabled hidden', self.client.get("/tv").text)
         self.assertEqual(self.client.get("/assets/vocal-pugs.svg").status_code, 200)

@@ -13,7 +13,7 @@ NODE_ENV = os.getenv("NODE_ENV", "production").strip().lower()
 
 
 def remove_unused_media(database: sqlite3.Connection, video_id: str, generation: str) -> bool:
-    if NODE_ENV == "development":
+    if NODE_ENV != "production":
         return False
     active = database.execute(
         """SELECT 1 FROM requests WHERE video_id = ?

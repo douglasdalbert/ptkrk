@@ -242,7 +242,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "scoring_mode": scoring_mode,
                 "vocal_calibration_ms": vocal_calibration_ms(),
                 "vocal_useful_percent": vocal_useful_percent(),
-                "development": os.getenv("NODE_ENV") == "development",
+                "development": os.getenv("NODE_ENV", "production").strip().lower() != "production",
                 "score_tolerance_ms": onset_tolerance_ms(),
                 "score_block_ms": block_duration_ms(),
                 "score_lane_count": score_lane_count(),
