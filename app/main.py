@@ -844,7 +844,7 @@ def tv_media(request_id: str, kind: str) -> Response:
 def singer_address(request: Request) -> str:
     address = os.getenv("KARAOKE_LAN_IP", "")
     if not address:
-        raise HTTPException(503, "Inicie com start.ps1 para detectar o IP da rede")
+        raise HTTPException(503, "Inicie com start-windows.ps1 ou start-linux.sh (WSL) para detectar o IP da rede")
     return f"https://{address}:8000/cantor"
 
 

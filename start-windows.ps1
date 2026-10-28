@@ -1,3 +1,9 @@
+param(
+    [switch]$PrepareOnly
+)
+
+$ErrorActionPreference = 'Stop'
+
 $wifi = Get-NetIPConfiguration | Where-Object {
     $_.NetAdapter.Status -eq 'Up' -and $_.NetAdapter.InterfaceDescription -match 'Wi-Fi|Wireless|802\.11' -and
     $_.IPv4Address -and $_.IPv4DefaultGateway
@@ -42,6 +48,8 @@ Copy-Item (Join-Path $mkcertRoot 'rootCA.pem') $rootCertificatePath -Force
 Write-Host "Karaoke na rede: https://$($env:KARAOKE_LAN_IP):8000/cantor"
 Write-Host 'TV no computador host: http://localhost:8001/tv'
 Write-Host "CA para instalar e confiar nos celulares: $rootCertificatePath"
+if ($PrepareOnly) { return }
+
 Write-Host "Enviando KARAOKE_LAN_IP=$($env:KARAOKE_LAN_IP) para os containers."
 docker compose up -d --build
 if ($LASTEXITCODE -ne 0) { throw 'Falha ao iniciar os containers.' }
