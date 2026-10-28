@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 190">
+  <defs>
+    <g id="head" stroke="#26252d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M56 52Q13 24 19 89L42 116 64 79M164 52Q207 24 201 89L178 116 156 79" fill="#655c61"/>
+      <path d="M110 27C65 21 40 56 41 110S72 172 110 175C148 172 180 158 179 110S155 21 110 27Z" fill="#e9cfa7"/>
+      <path d="M87 49Q110 38 133 49M94 61Q110 54 126 61" fill="none"/>
+      <ellipse cx="76" cy="94" rx="26" ry="31" fill="#655c61"/>
+      <ellipse cx="144" cy="94" rx="26" ry="31" fill="#655c61"/>
+      <path d="M64 139Q62 109 88 113Q110 101 132 113Q158 109 156 139Q147 164 110 158Q73 164 64 139Z" fill="#655c61"/>
+      <path d="M97 117Q110 110 123 117L110 129Z" fill="#26252d"/>
+      <path d="M110 128V139" fill="none"/>
+    </g>
+    <g id="eyes" fill="#26252d" stroke="#fff" stroke-width="4">
+      <circle cx="77" cy="91" r="13"/><circle cx="143" cy="91" r="13"/>
+      <g fill="#fff" stroke="none"><circle cx="73" cy="86" r="4"/><circle cx="139" cy="86" r="4"/></g>
+    </g>
+  </defs>
+  <symbol id="waiting" viewBox="0 0 220 190">
+    <use href="#head"/><use href="#eyes"/>
+    <path d="M87 147Q110 140 133 147" fill="none" stroke="#26252d" stroke-width="5" stroke-linecap="round"/>
+    <g fill="#e9cfa7" stroke="#26252d" stroke-width="4"><rect x="37" y="156" width="47" height="22" rx="10"/><rect x="136" y="156" width="47" height="22" rx="10"/></g>
+    <g fill="#aab8c5"><circle cx="93" cy="12" r="4"/><circle cx="110" cy="9" r="4"/><circle cx="127" cy="12" r="4"/></g>
+  </symbol>
+  <symbol id="bad" viewBox="0 0 220 190">
+    <use href="#head"/><use href="#eyes"/>
+    <path d="M62 65L86 71M134 71L158 65" stroke="#26252d" stroke-width="5" stroke-linecap="round"/>
+    <ellipse cx="110" cy="149" rx="13" ry="15" fill="#26252d"/>
+    <path d="M177 106Q193 124 181 131Q169 132 177 106" fill="#83d7ef"/>
+  </symbol>
+  <symbol id="falling" viewBox="0 0 220 190">
+    <g transform="rotate(-9 110 100)"><use href="#head"/><use href="#eyes"/>
+      <path d="M63 68L86 62M135 65L157 72M88 151Q109 137 132 151" fill="none" stroke="#26252d" stroke-width="5" stroke-linecap="round"/>
+    </g>
+  </symbol>
+  <symbol id="good" viewBox="0 0 220 190">
+    <use href="#head"/><use href="#eyes"/>
+    <path d="M86 141Q110 163 134 141" fill="none" stroke="#26252d" stroke-width="5" stroke-linecap="round"/>
+    <g fill="#e7968a"><ellipse cx="55" cy="119" rx="8" ry="5"/><ellipse cx="165" cy="119" rx="8" ry="5"/></g>
+  </symbol>
+  <symbol id="excellent" viewBox="0 0 220 190">
+    <use href="#head"/>
+    <g fill="#26252d" stroke="#26252d" stroke-width="5" stroke-linejoin="round">
+      <path d="M48 80H99L95 104Q75 122 55 104ZM121 80H172L165 104Q145 122 125 104Z"/>
+      <path d="M99 85Q110 78 121 85" fill="none"/>
+    </g>
+    <path d="M84 139Q110 173 136 139Z" fill="#26252d"/>
+    <path d="M104 149Q120 139 126 151V164Q115 177 104 164Z" fill="#ee91a6" stroke="#26252d" stroke-width="3"/>
+    <path d="M22 18L25 28 35 31 25 34 22 44 19 34 9 31 19 28ZM194 13L197 23 207 26 197 29 194 39 191 29 181 26 191 23Z" fill="#c9fa45"/>
+  </symbol>
+</svg>

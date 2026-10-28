@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -46,6 +47,7 @@ from app.scoring import (
     star_nice_percent,
 )
 from app.separation import cancel_for_playback
+from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_useful_percent
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
 from app.search import search_karaoke, search_limit, search_with_captions
@@ -205,6 +207,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
         scoreboards = {singer["id"]: scoreboard_snapshot(database, singer["id"]) for singer in singers}
         scores = []
+        scoring_mode = None
         caption_tracks = []
         active_caption_track_id = None
         if invitation:
@@ -213,6 +216,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "SELECT video_id, caption_track_id FROM requests WHERE id = ?", (invitation["request_id"],)
             ).fetchone()
             captions = request_caption_path(generation, current_video) if current_video else None
+            scoring_mode = "captions" if has_timed_captions(captions) else "vocal"
             if captions and captions.is_file():
                 try:
                     bundle = json.loads(caption_track_path(generation, current_video["video_id"]).read_text(encoding="utf-8"))
@@ -234,6 +238,10 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
                 "caption_tracks": caption_tracks, "caption_track_id": active_caption_track_id,
                 "scores": scores, "scoreboards": scoreboards, "ranking_max": max_score(),
+                "scoring_mode": scoring_mode,
+                "vocal_calibration_ms": vocal_calibration_ms(),
+                "vocal_useful_percent": vocal_useful_percent(),
+                "development": os.getenv("NODE_ENV") == "development",
                 "score_tolerance_ms": onset_tolerance_ms(),
                 "score_block_ms": block_duration_ms(),
                 "score_lane_count": score_lane_count(),
@@ -447,6 +455,9 @@ async def requests_socket(websocket: WebSocket) -> None:
                     "server_time": time.time(),
                     "server_time_ms": round(time.time() * 1000),
                 }
+                duration_ms = message.get("duration_ms")
+                if type(duration_ms) is int and 0 < duration_ms <= 720000:
+                    playback_sync["duration_ms"] = duration_ms
                 save_playback_sync(playback_sync)
                 continue
             if is_tv and message.get("type") == "boost_state":
@@ -545,6 +556,53 @@ async def requests_socket(websocket: WebSocket) -> None:
                             subscribers.discard(subscriber)
                 continue
             if is_tv:
+                continue
+            if message.get("type") == "vocal_sample":
+                request_id = message.get("request_id")
+                event_id = message.get("event_id")
+                position_ms, voiced_ms = message.get("position_ms"), message.get("voiced_ms")
+                loudness, jitter = message.get("loudness"), message.get("jitter")
+                if (not isinstance(request_id, str) or not isinstance(event_id, str) or not 1 <= len(event_id) <= 80
+                        or type(position_ms) is not int or type(voiced_ms) is not int
+                        or not 500 <= voiced_ms <= 1000 or not 1000 <= position_ms <= 720000
+                        or type(loudness) not in (int, float) or not math.isfinite(loudness) or not 0 < loudness <= 1
+                        or type(jitter) not in (int, float) or not math.isfinite(jitter) or not 0 <= jitter <= 200):
+                    await websocket.send_json({"type": "vocal_error", "message": "Amostra de voz inválida."})
+                    continue
+                sync = load_playback_sync()
+                if (not sync or sync["request_id"] != request_id or not sync["playing"]
+                        or time.time() - sync["server_time"] > 1.5 or not sync.get("duration_ms")):
+                    await websocket.send_json({"type": "vocal_error", "message": "Aguardando sincronismo da TV."})
+                    continue
+                expected_position = sync["position_ms"] + round((time.time() - sync["server_time"]) * 1000)
+                if abs(position_ms - expected_position) > 1000:
+                    await websocket.send_json({"type": "vocal_error", "message": "Sincronismo da voz expirou."})
+                    continue
+                with connection() as database:
+                    database.execute("BEGIN IMMEDIATE")
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    owner = database.execute(
+                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    singer_id = singer_socket_ids.get(websocket)
+                    eligible = owner and owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = database.execute(
+                            "SELECT 1 FROM backvocals WHERE request_id = ? AND singer_id = ? "
+                            "AND joined = 1 AND accepted = 1 AND score_eligible = 1", (request_id, singer_id),
+                        ).fetchone() is not None
+                    if not eligible or owner is None:
+                        continue
+                    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+                    update = record_vocal_sample(
+                        database, request_id, singer_id, event_id, position_ms, sync["duration_ms"],
+                        voiced_ms, loudness, jitter, request_caption_path(generation, owner),
+                    )
+                if update:
+                    add_tv_notification(f"vocal:{event_id}", request_id, update)
+                    await websocket.send_json(update)
                 continue
             if message.get("type") == "boost_request":
                 request_id = message.get("request_id")
@@ -776,6 +834,7 @@ def tv_select_caption_track(request_id: str, selection: CaptionTrackSelection) -
             "UPDATE requests SET caption_track_id = ? WHERE id = ?", (selection.track_id, request_id)
         )
         database.execute("DELETE FROM song_scores WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM vocal_scores WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM score_events WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM vocal_activity WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM tv_notifications WHERE request_id = ?", (request_id,))

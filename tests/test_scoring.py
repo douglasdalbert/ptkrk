@@ -226,6 +226,9 @@ This is a phrase
                         "boosted_blocks = '[1, 2]', score_units = 4 WHERE request_id = 'song'"
                     )
                     self.assertEqual(score_snapshot(database, "song", sidecar)[0]["points"], 1250.0)
+                    penalty = record_offcue_penalty(database, "song", "singer", "overflow-penalty", 9000, sidecar)
+                    self.assertGreater(penalty["points"], 1000)
+                    self.assertLess(penalty["points"], 1250)
                     result = finalize_performance(database, "song", sidecar, Path(directory) / "missing.jpg")
                     self.assertEqual(result["points"], 1000.0)
                     self.assertEqual(scoreboard_snapshot(database, "singer")["party_best"]["points"], 1000.0)

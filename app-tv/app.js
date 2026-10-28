@@ -1,4 +1,5 @@
 import { ConfirmDialog } from "/cantor/assets/confirm-dialog.js";
+import { renderVocalFeedback } from "/cantor/assets/vocal-feedback.js";
 
 const show = document.querySelector("#show");
 const video = document.querySelector("#video");
@@ -69,6 +70,13 @@ const scoreStar = document.querySelector("#score-star");
 const scoreValue = document.querySelector("#score-value");
 const scoreStreamers = document.querySelector("#score-streamers");
 const currentScoreValue = document.querySelector("#current-score-value");
+const vocalFeedback = document.querySelector("#vocal-feedback");
+const testPugButton = document.querySelector("#test-pug-action");
+let scoringMode = null;
+let vocalScore = null;
+let vocalCalibrationMs = 20000;
+let development = false;
+let pugPreview = -1;
 const missColor = "#f47783";
 const hitColor = "#5ac8e4";
 const goldColor = "#ffe94d";
@@ -81,6 +89,25 @@ let starCloseMs = 30000;
 let scoreShow = null;
 let audioContext = null;
 let noise = null;
+
+function updateVocalFeedback() {
+  const previewing = development && pugPreview >= 0;
+  vocalFeedback.hidden = !previewing && (!activeId || scoringMode !== "vocal");
+  if (vocalFeedback.hidden) return;
+  const score = previewing ? {
+    level: pugPreview - 1, points: pugPreview * rankingMax / 4,
+    percent: pugPreview * 25, ranking_max: rankingMax,
+  } : vocalScore;
+  renderVocalFeedback(vocalFeedback, score, vocalCalibrationMs);
+}
+
+testPugButton.addEventListener("click", () => {
+  if (!development) return;
+  pugPreview = pugPreview >= 4 ? -1 : pugPreview + 1;
+  testPugButton.textContent = pugPreview < 0 ? "Testar pug" : "Testar pug · próximo / sair";
+  testPugButton.setAttribute("aria-pressed", String(pugPreview >= 0));
+  updateVocalFeedback();
+});
 
 function setConnectionStatus(state, label) {
   connectionStatus.dataset.state = state;
@@ -226,6 +253,8 @@ function stopPlayback() {
   activeTrackItem = null;
   captionLoadToken += 1;
   activeScorePoints = 0;
+  vocalScore = null;
+  updateVocalFeedback();
   currentScoreValue.textContent = "0";
   resetBoost();
   cancelAnimationFrame(captionFrame);
@@ -257,6 +286,7 @@ async function startPlayback(item) {
   closeScorePanel();
   activeTrackItem = item;
   activeScorePoints = 0;
+  vocalScore = null;
   currentScoreValue.textContent = "0";
   resetBoost();
   captionBars = [];
@@ -277,6 +307,7 @@ async function startPlayback(item) {
   video.removeAttribute("src");
   video.load();
   activeId = item.id;
+  updateVocalFeedback();
   video.src = `/api/tv/${encodeURIComponent(item.id)}/video`;
   video.load();
   playbackCalibrationStartedAt = performance.now();
@@ -305,6 +336,7 @@ function sendPlaybackSync() {
     type: "playback_sync",
     request_id: activeId,
     position_ms: Math.round(video.currentTime * 1000),
+    duration_ms: Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : null,
     playing: !video.paused && !video.ended,
   }));
 }
@@ -518,6 +550,12 @@ function render(snapshot) {
   boostDurationMs = snapshot.boost_duration_ms ?? boostDurationMs;
   boostMultiplier = snapshot.boost_multiplier ?? boostMultiplier;
   rankingMax = snapshot.ranking_max ?? rankingMax;
+  scoringMode = snapshot.scoring_mode;
+  vocalCalibrationMs = snapshot.vocal_calibration_ms ?? 20000;
+  development = snapshot.development === true;
+  testPugButton.hidden = !development;
+  if (!development) pugPreview = -1;
+  boostBar.style.visibility = scoringMode === "vocal" ? "hidden" : "";
   document.querySelector("#current-score-max").textContent = String(rankingMax);
   starLowPercent = snapshot.star_low_percent ?? starLowPercent;
   starHighPercent = snapshot.star_high_percent ?? starHighPercent;
@@ -540,9 +578,20 @@ function render(snapshot) {
     stopPlayback();
   }
   const leadScore = activeId && snapshot.scores?.find(score => score.singer_id === activeSingerId);
+  lyricTrack.hidden = !activeId || scoringMode === "vocal";
+  if (activeId && Array.isArray(snapshot.active_bars)) {
+    captionBars = snapshot.active_bars;
+    renderCaptionOptions(snapshot.caption_tracks || [], snapshot.caption_track_id);
+    renderCaptionBar();
+  }
+  vocalScore = leadScore?.mode === "vocal" ? leadScore : null;
+  updateVocalFeedback();
   if (leadScore) {
     activeScorePoints = leadScore.points;
     currentScoreValue.textContent = String(Math.round(activeScorePoints));
+  } else if (!scoreShow) {
+    activeScorePoints = 0;
+    currentScoreValue.textContent = "0";
   }
 
   const status = document.querySelector("#next-status");
@@ -617,6 +666,10 @@ function connect() {
       if (message.singer_id === activeSingerId) {
         activeScorePoints = message.points;
         currentScoreValue.textContent = String(Math.round(activeScorePoints));
+        if (message.mode === "vocal") {
+          vocalScore = message;
+          updateVocalFeedback();
+        }
       }
       return;
     }

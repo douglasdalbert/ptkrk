@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0b0d10">
   <title>Karaokê | TV</title>
   <link rel="stylesheet" href="/tv/assets/style.css">
+  <link rel="stylesheet" href="/assets/vocal-feedback.css">
   <script type="module" src="/tv/assets/app.js"></script>
 </head>
 <body>
@@ -27,6 +28,12 @@
           </div>
         </div>
         <span id="connect-status" class="connect-status" role="status" data-state="connecting" title="Conectando" tabindex="0"><span class="sr-only">Conectando</span></span>
+        <section id="vocal-feedback" class="vocal-feedback" aria-label="Constância vocal" hidden>
+          <svg viewBox="0 0 220 190" aria-hidden="true"><use href="/assets/vocal-pugs.svg#waiting"/></svg>
+          <strong class="vocal-label"></strong>
+          <progress max="100" value="0" aria-label="Calibração da voz"></progress>
+          <span class="vocal-points"></span>
+        </section>
         <div id="skip-notice" class="skip-notice" hidden>Pulando música <span id="skip-clock"></span></div>
         <div id="error" class="error" role="alert"></div>
       </div>
@@ -45,7 +52,8 @@
             <div id="caption-options"></div>
           </section>
           <section class="actions" aria-label="Ações da TV">
-            <button id="current-score-action" type="button" disabled><span class="current-score-star" aria-hidden="true">★</span> <span class="current-score-numbers"><strong id="current-score-value">0</strong><span class="current-score-max">/ <span id="current-score-max">1000</span></span></span></button>
+            <button id="current-score-action" type="button" disabled hidden><span class="current-score-star" aria-hidden="true">★</span> <span class="current-score-numbers"><strong id="current-score-value">0</strong><span class="current-score-max">/ <span id="current-score-max">1000</span></span></span></button>
+            <button id="test-pug-action" type="button" hidden>Testar pug</button>
             <button id="noise-action" type="button" title="Ajustar ruído: - ou _ diminui, + ou = aumenta"><span id="noise-label" aria-live="polite">Ruído --%</span> <span class="keycaps"><kbd>−</kbd><kbd>+</kbd></span></button>
             <button id="play-action" type="button" title="Reproduzir o vídeo (Espaço)" disabled>Reproduzir <kbd>Espaço</kbd></button>
             <button id="move-track-action" type="button" title="Mover blocos (setas para cima e para baixo)">Mover blocos <span class="keycaps"><kbd>↑</kbd><kbd>↓</kbd></span></button>

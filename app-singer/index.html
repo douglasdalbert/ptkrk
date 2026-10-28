@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#111216">
     <title>Karaokê | Cantor</title>
     <link rel="stylesheet" href="/cantor/assets/style.css">
+    <link rel="stylesheet" href="/assets/vocal-feedback.css">
     <script type="module" src="/cantor/assets/app.js"></script>
   </head>
   <body>
@@ -73,6 +74,13 @@
       <span class="singing-note" aria-hidden="true">♫</span>
       <strong id="singing-title">Você está cantando</strong>
       <p id="score-status" role="status">Ative o microfone para começar a pontuar.</p>
+      <section id="vocal-feedback" class="vocal-feedback" aria-label="Constância vocal" hidden>
+        <svg viewBox="0 0 220 190" aria-hidden="true"><use href="/assets/vocal-pugs.svg#waiting"/></svg>
+        <strong class="vocal-label"></strong>
+        <progress max="100" value="0" aria-label="Calibração da voz"></progress>
+        <span class="vocal-points"></span>
+      </section>
+      <p id="vocal-detection" role="status" hidden></p>
       <button id="microphone-button" class="primary" type="button">Ativar microfone</button>
       <canvas id="microphone-waveform" class="microphone-waveform" width="320" height="48" role="img" aria-label="Forma de onda do microfone"></canvas>
     </dialog>
@@ -112,7 +120,7 @@
         <ol id="captioned-results" class="search-results"></ol>
       </section>
       <section class="search-area" aria-labelledby="karaoke-title">
-        <header class="search-area-heading"><h2 id="karaoke-title">Karaokê</h2><span>(sem pontuação)</span></header>
+        <header class="search-area-heading"><h2 id="karaoke-title">Karaokê</h2><span>(constância vocal sem legenda)</span></header>
         <p id="karaoke-status" class="search-status" role="status"></p>
         <ol id="karaoke-results" class="search-results"></ol>
       </section>

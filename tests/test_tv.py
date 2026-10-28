@@ -73,6 +73,95 @@ class TvTests(unittest.TestCase):
         with patch.dict("os.environ", {"KARAOKE_STAR_NICE_PERCENT": "90.1"}):
             self.assertEqual(self.client.get("/api/tv/state").json()["star_nice_percent"], 90.1)
 
+    def test_vocal_settings_and_development_preview_flag(self):
+        with patch.dict("os.environ", {
+            "KARAOKE_VOCAL_CALIBRATION_MS": "15000", "KARAOKE_VOCAL_USEFUL_PERCENT": "75",
+            "NODE_ENV": "development",
+        }):
+            state = self.client.get("/api/tv/state").json()
+            self.assertEqual(state["vocal_calibration_ms"], 15000)
+            self.assertEqual(state["vocal_useful_percent"], 75)
+            self.assertTrue(state["development"])
+        with patch.dict("os.environ", {"NODE_ENV": "production"}):
+            self.assertFalse(self.client.get("/api/tv/state").json()["development"])
+        self.assertIn('id="current-score-action" type="button" disabled hidden', self.client.get("/tv").text)
+        self.assertEqual(self.client.get("/assets/vocal-pugs.svg").status_code, 200)
+
+    def test_vocal_socket_calibrates_scores_reconnects_and_rejects_caption_mode(self):
+        identity = self.client.post("/api/singers", json={"name": "Constância"}).json()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO requests(id,singer_id,video_id,status) VALUES ('vocal-song',?,'abcdefghijk','ready')",
+                (identity["singer_id"],),
+            )
+            enqueue_request(database, "vocal-song")
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'vocal-song',0,1,1)"
+            )
+
+        def receive_type(websocket, kind):
+            for _ in range(10):
+                message = websocket.receive_json()
+                if message["type"] == kind:
+                    return message
+            self.fail(f"Mensagem {kind} não recebida")
+
+        def sync(position, playing=True, fresh=True):
+            save_playback_sync({
+                "type": "playback_sync", "request_id": "vocal-song", "position_ms": position,
+                "duration_ms": 180000, "playing": playing,
+                "server_time": time.time() if fresh else time.time() - 10,
+                "server_time_ms": round(time.time() * 1000),
+            })
+
+        def sample(websocket, position):
+            websocket.send_json({
+                "type": "vocal_sample", "request_id": "vocal-song", "event_id": f"vocal-{position}",
+                "position_ms": position, "voiced_ms": 1000, "loudness": 0.2, "jitter": 10,
+            })
+
+        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false", "KARAOKE_VOCAL_CALIBRATION_MS": "1000"}):
+            with self.client.websocket_connect("/ws/requests") as websocket:
+                websocket.send_json({"token": identity["token"]})
+                self.assertEqual(websocket.receive_json()["scoring_mode"], "vocal")
+                sample(websocket, 1000)
+                self.assertEqual(receive_type(websocket, "vocal_error")["message"], "Aguardando sincronismo da TV.")
+                sync(1000)
+                sample(websocket, 1000)
+                calibration = receive_type(websocket, "score_update")
+                self.assertEqual(calibration["calibration_ms"], 1000)
+                self.assertEqual(calibration["level"], 2)
+                sync(2000)
+                sample(websocket, 2000)
+                score = receive_type(websocket, "score_update")
+                self.assertEqual(score["result"], "hit")
+                self.assertGreater(score["points"], 0)
+                sync(3000, playing=False)
+                sample(websocket, 3000)
+                receive_type(websocket, "vocal_error")
+                sync(3000, fresh=False)
+                sample(websocket, 3000)
+                receive_type(websocket, "vocal_error")
+                websocket.send_json({"type": "vocal_sample"})
+                receive_type(websocket, "vocal_error")
+
+            with self.client.websocket_connect("/ws/requests") as websocket:
+                websocket.send_json({"token": identity["token"]})
+                snapshot = websocket.receive_json()
+                self.assertEqual(snapshot["scores"][0]["points"], score["points"])
+                captions = Path(self.directory.name) / generation / "captions" / "abcdefghijk.json"
+                captions.parent.mkdir(parents=True)
+                captions.write_text('{"bars": [{"block_index": 0, "start_ms": 0, "end_ms": 1000}]}',
+                                    encoding="utf-8")
+                sync(4000)
+                sample(websocket, 4000)
+                websocket.send_json({"type": "vocal_sample"})
+                receive_type(websocket, "vocal_error")
+                with connection() as database:
+                    self.assertEqual(database.execute("SELECT hits FROM vocal_scores").fetchone()[0], 1)
+                self.assertEqual(main_module.party_snapshot()["scoring_mode"], "captions")
+
     def test_only_local_tv_can_start_and_serve_video(self):
         self.add_ready()
         with connection() as database:

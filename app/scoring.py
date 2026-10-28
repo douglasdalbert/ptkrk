@@ -366,12 +366,16 @@ def record_offcue_penalty(
 
 
 def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: Path | None) -> list[dict]:
-    if caption_path is None or not caption_path.is_file():
-        return []
-    try:
-        total_blocks = len(json.loads(caption_path.read_text(encoding="utf-8")).get("bars", []))
-    except (OSError, json.JSONDecodeError):
-        return []
+    from app.vocal import vocal_snapshot
+
+    total_blocks = 0
+    if caption_path and caption_path.is_file():
+        try:
+            total_blocks = len(json.loads(caption_path.read_text(encoding="utf-8")).get("bars", []))
+        except (OSError, json.JSONDecodeError):
+            pass
+    if not total_blocks:
+        return vocal_snapshot(database, request_id)
     rows = database.execute(
         "SELECT song_scores.singer_id, singers.name, song_scores.hit_blocks, song_scores.boosted_blocks, "
         "song_scores.penalties, song_scores.score_units "
@@ -423,10 +427,11 @@ def finalize_performance(
             (request_id,),
         )]]
     database.executemany(
-        "INSERT OR IGNORE INTO score_history(request_id, singer_id, title, video_id, points, preview, participants) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO score_history(request_id, singer_id, title, video_id, points, preview, participants, scoring_mode) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [(request_id, participant["singer_id"], item["title"] or item["video_id"], item["video_id"],
-                    min(lead_score["points"], max_score()) if lead_score else 0, preview, json.dumps(participants))
+                    min(lead_score["points"], max_score()) if lead_score else 0, preview, json.dumps(participants),
+                    lead_score.get("mode", "captions") if lead_score else "captions")
          for participant in participants],
     )
     return performance_record(database, request_id)

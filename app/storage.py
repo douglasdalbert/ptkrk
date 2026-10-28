@@ -176,6 +176,22 @@ def initialize() -> None:
                 offcue_window INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS vocal_scores (
+                request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                calibration_ms INTEGER NOT NULL DEFAULT 0,
+                loudness_sum REAL NOT NULL DEFAULT 0,
+                jitter_sum REAL NOT NULL DEFAULT 0,
+                point_rate REAL,
+                points REAL NOT NULL DEFAULT 0,
+                hits INTEGER NOT NULL DEFAULT 0,
+                penalties INTEGER NOT NULL DEFAULT 0,
+                level INTEGER NOT NULL DEFAULT 2,
+                good_streak INTEGER NOT NULL DEFAULT 0,
+                bad_streak INTEGER NOT NULL DEFAULT 0,
+                last_position_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (request_id, singer_id)
+            );
             CREATE TABLE IF NOT EXISTS score_history (
                 request_id TEXT NOT NULL,
                 singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
@@ -252,6 +268,8 @@ def initialize() -> None:
             database.execute("ALTER TABLE song_scores ADD COLUMN score_units INTEGER")
         if "boosted_blocks" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:
             database.execute("ALTER TABLE song_scores ADD COLUMN boosted_blocks TEXT NOT NULL DEFAULT '[]'")
+        if "scoring_mode" not in {row[1] for row in database.execute("PRAGMA table_info(score_history)")}:
+            database.execute("ALTER TABLE score_history ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'captions'")
         if (database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'performances'").fetchone()
                 and database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'performance_participants'").fetchone()):
             for performance in database.execute(
@@ -272,7 +290,10 @@ def initialize() -> None:
                 )
             database.execute("DROP TABLE performance_participants")
             database.execute("DROP TABLE performances")
-        database.execute("UPDATE score_history SET points = ? WHERE points > ?", (max_score(), max_score()))
+        database.execute(
+            "UPDATE score_history SET points = ? WHERE points > ?",
+            (max_score(), max_score()),
+        )
         database.execute("INSERT OR IGNORE INTO party(id, generation) VALUES (1, ?)", (str(uuid4()),))
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         for category in ("videos", "previews"):

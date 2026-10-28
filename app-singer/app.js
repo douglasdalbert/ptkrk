@@ -1,4 +1,6 @@
 import { ConfirmDialog } from "./confirm-dialog.js";
+import { VocalSampler } from "./vocal-analysis.js";
+import { renderVocalFeedback } from "./vocal-feedback.js";
 
 const storageKey = "karaoke.singer";
 const entry = document.querySelector("#entry");
@@ -34,6 +36,13 @@ const microphoneWaveform = document.querySelector("#microphone-waveform");
 const microphonePermissionButton = document.querySelector("#microphone-permission-button");
 const microphonePermissionStatus = document.querySelector("#microphone-permission-status");
 const scoreStatus = document.querySelector("#score-status");
+const vocalFeedback = document.querySelector("#vocal-feedback");
+const vocalDetection = document.querySelector("#vocal-detection");
+const vocalSampler = new VocalSampler();
+let scoringMode = null;
+let vocalCalibrationMs = 20000;
+let scoringSession = null;
+let lastVocalDiagnosticAt = 0;
 const actionFooter = document.querySelector("#action-footer");
 let microphonePermissionStatusTimer = null;
 const skipAction = document.querySelector("#skip-action");
@@ -154,6 +163,10 @@ function clearSession() {
   playbackClock = null;
   currentScoreboard = null;
   scoredRequestId = null;
+  scoringSession = null;
+  scoringMode = null;
+  vocalSampler.reset();
+  vocalFeedback.hidden = true;
   stopMicrophone();
   allowSkip = false;
   latestItems = [];
@@ -266,8 +279,19 @@ function connect() {
     }
     if (message.type === "score_update") {
       if (message.singer_id !== singer?.singer_id) return;
+      if (message.request_id !== currentInvitation?.request_id) return;
+      if (message.mode === "vocal") {
+        renderVocalFeedback(vocalFeedback, message, vocalCalibrationMs);
+        scoreStatus.textContent = message.result === "calibrating" ? "Cante para conhecer seu padrão de voz." :
+          message.result === "hit" ? "Boa constância!" : "Tente recuperar a constância, sem forçar a voz.";
+        return;
+      }
       const action = message.result === "hit" ? "Acertou" : "Som fora de um bloco";
       scoreStatus.textContent = `${action}: ${message.hits} acertos, ${message.penalties} erros. ${Math.round(message.points)} pontos.`;
+      return;
+    }
+    if (message.type === "vocal_error") {
+      scoreStatus.textContent = message.message;
       return;
     }
     if (message.type === "group_state") {
@@ -294,6 +318,19 @@ function connect() {
       microphoneSilenceMs = message.microphone_silence_ms ?? 300;
       boostLoudnessPercent = message.boost_loudness_percent ?? boostLoudnessPercent;
       boostActive = !!message.boost_active;
+      scoringMode = message.scoring_mode;
+      vocalCalibrationMs = message.vocal_calibration_ms ?? 20000;
+      const nextScoringSession = `${message.invitation?.request_id}:${message.caption_track_id}:${scoringMode}`;
+      if (scoringSession !== nextScoringSession) {
+        scoringSession = nextScoringSession;
+        vocalSampler.reset();
+      }
+      vocalFeedback.hidden = scoringMode !== "vocal";
+      vocalDetection.hidden = scoringMode !== "vocal";
+      if (!vocalFeedback.hidden) {
+        renderVocalFeedback(vocalFeedback,
+          message.scores?.find(score => score.singer_id === singer.singer_id), vocalCalibrationMs);
+      }
       if (message.invitation?.request_id !== scoredRequestId) {
         scoredRequestId = message.invitation?.request_id || null;
       }
@@ -632,7 +669,9 @@ function performancePreviewFor(record, placeholder) {
 }
 
 function estimatePlaybackPosition() {
-  if (!playbackClock || !playbackClock.playing) return null;
+  if (!playbackClock || !playbackClock.playing ||
+      playbackClock.request_id !== currentInvitation?.request_id ||
+      performance.now() - playbackClock.receivedAt > 2000) return null;
   return Math.round(playbackClock.position_ms + performance.now() - playbackClock.receivedAt);
 }
 
@@ -766,7 +805,7 @@ function sampleMicrophone() {
       sendMicrophoneActivity(true, requestId, position);
       microphoneStatePositioned = true;
     }
-    if (microphoneSpeaking && position !== null) trackLoudness(rms, requestId);
+    if (microphoneSpeaking && position !== null && scoringMode !== "vocal") trackLoudness(rms, requestId);
     if (loudFrameCount >= 2 && requestId && position === null) {
       scoreStatus.textContent = "Aguardando sincronismo da TV.";
     }
@@ -783,6 +822,27 @@ function sampleMicrophone() {
       }
     }
   }
+  if (scoringMode === "vocal" && position !== null && socket?.readyState === WebSocket.OPEN) {
+    const sample = vocalSampler.sample(samples, microphoneContext.sampleRate, rms,
+      microphoneRmsThreshold, performance.now());
+    if (sample) {
+      socket.send(JSON.stringify({
+        type: "vocal_sample", request_id: requestId, event_id: crypto.randomUUID(),
+        position_ms: position, ...sample,
+      }));
+    }
+  } else {
+    vocalSampler.reset();
+  }
+  if (scoringMode === "vocal" && performance.now() - lastVocalDiagnosticAt >= 1000) {
+    lastVocalDiagnosticAt = performance.now();
+    const input = `Entrada ${(rms * 100).toFixed(1)}% · mínimo ${(microphoneRmsThreshold * 100).toFixed(1)}%`;
+    vocalDetection.textContent = position === null ? "Aguardando reprodução e sincronismo da TV." :
+      socket?.readyState !== WebSocket.OPEN ? "Aguardando conexão com o servidor." :
+      vocalSampler.status === "quiet" ? `${input}. Voz abaixo do limite de ruído.` :
+      vocalSampler.status === "uncertain" ? `${input}. Som captado, mas sem uma nota vocal confiável. Aproxime o celular da boca.` :
+      `${input}. Acumulando trechos de voz para a análise.`;
+  }
   drawMicrophoneWaveform(rms >= microphoneRmsThreshold && microphoneSpeaking ? samples : null);
   microphoneFrame = requestAnimationFrame(sampleMicrophone);
 }
@@ -794,9 +854,11 @@ microphoneButton.addEventListener("click", async () => {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     microphoneContext = new AudioContext();
+    await microphoneContext.resume();
     const source = microphoneContext.createMediaStreamSource(microphoneStream);
     microphoneAnalyser = microphoneContext.createAnalyser();
-    microphoneAnalyser.fftSize = 1024;
+    microphoneAnalyser.fftSize = 2048;
+    vocalSampler.reset();
     source.connect(microphoneAnalyser);
     loudFrameCount = 0;
     silenceStartedAt = null;
@@ -804,7 +866,8 @@ microphoneButton.addEventListener("click", async () => {
     microphoneSpeaking = false;
     microphoneStatePositioned = false;
     drawMicrophoneWaveform();
-    scoreStatus.textContent = "Microfone ativo. Cante junto com as barras.";
+    scoreStatus.textContent = scoringMode === "vocal" ?
+      "Microfone ativo. Cante para calibrar a constância vocal." : "Microfone ativo. Cante junto com as barras.";
     microphoneButton.textContent = "Microfone ativo";
     sampleMicrophone();
   } catch {
@@ -998,7 +1061,7 @@ function renderSkip(message) {
   allowSkip = message.allow_skip;
   const participant = currentSong && singer && (currentSong.singer_id === singer.singer_id ||
     currentSong.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
-  boostButton.hidden = !message.invitation?.accepted || !currentSong || !!participant || !!currentSkip;
+  boostButton.hidden = scoringMode === "vocal" || !message.invitation?.accepted || !currentSong || !!participant || !!currentSkip;
   const boostReady = !!message.boost_ready && !message.boost_active;
   boostButton.disabled = !boostReady;
   boostButton.dataset.ready = String(boostReady);
