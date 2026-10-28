@@ -1,7 +1,7 @@
 const faces = ["bad", "falling", "good", "excellent"];
 export const vocalLabels = ["Vamos recuperar!", "Está se engasgando?!?", "Está indo bem...", "Dando show!"];
 
-export function renderVocalFeedback(element, score = null, calibrationMs = 20000) {
+export function renderVocalFeedback(element, score = null, calibrationMs = 5000, development = false) {
   const calibrating = !score || score.level < 0;
   const level = Math.max(0, Math.min(3, score?.level ?? 0));
   const face = calibrating ? "waiting" : faces[level];
@@ -15,6 +15,8 @@ export function renderVocalFeedback(element, score = null, calibrationMs = 20000
   const meter = element.querySelector("progress");
   meter.value = percent;
   meter.setAttribute("aria-label", calibrating ? "Calibração da voz" : "Solta a voz!");
-  element.querySelector(".vocal-points").textContent = calibrating ? "Cante para calibrar" :
+  const points = element.querySelector(".vocal-points");
+  points.hidden = !development;
+  points.textContent = calibrating ? "Cante para calibrar" :
     `${Math.round(score.points).toLocaleString("pt-BR")} / ${score.ranking_max.toLocaleString("pt-BR")} pontos`;
 }

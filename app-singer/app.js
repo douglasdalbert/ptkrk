@@ -41,8 +41,9 @@ const vocalFeedback = document.querySelector("#vocal-feedback");
 const vocalDetection = document.querySelector("#vocal-detection");
 const vocalSampler = new VocalSampler();
 let scoringMode = null;
-let vocalCalibrationMs = 20000;
+let vocalCalibrationMs = 5000;
 let scoringSession = null;
+let development = false;
 let lastVocalDiagnosticAt = 0;
 const actionFooter = document.querySelector("#action-footer");
 let microphonePermissionStatusTimer = null;
@@ -282,7 +283,7 @@ function connect() {
       if (message.singer_id !== singer?.singer_id) return;
       if (message.request_id !== currentInvitation?.request_id) return;
       if (message.mode === "vocal") {
-        renderVocalFeedback(vocalFeedback, message, vocalCalibrationMs);
+        renderVocalFeedback(vocalFeedback, message, vocalCalibrationMs, development);
         scoreStatus.textContent = message.result === "calibrating" ? "Cante para conhecer seu padrão de voz." :
           vocalLabels[Math.max(0, Math.min(3, message.level))];
         return;
@@ -320,7 +321,8 @@ function connect() {
       boostLoudnessPercent = message.boost_loudness_percent ?? boostLoudnessPercent;
       boostActive = !!message.boost_active;
       scoringMode = message.scoring_mode;
-      vocalCalibrationMs = message.vocal_calibration_ms ?? 20000;
+      development = message.development === true;
+      vocalCalibrationMs = message.vocal_calibration_ms ?? 5000;
       const nextScoringSession = `${message.invitation?.request_id}:${message.caption_track_id}:${scoringMode}`;
       if (scoringSession !== nextScoringSession) {
         scoringSession = nextScoringSession;
@@ -330,7 +332,7 @@ function connect() {
       vocalDetection.hidden = scoringMode !== "vocal";
       if (!vocalFeedback.hidden) {
         renderVocalFeedback(vocalFeedback,
-          message.scores?.find(score => score.singer_id === singer.singer_id), vocalCalibrationMs);
+          message.scores?.find(score => score.singer_id === singer.singer_id), vocalCalibrationMs, development);
       }
       if (message.invitation?.request_id !== scoredRequestId) {
         scoredRequestId = message.invitation?.request_id || null;

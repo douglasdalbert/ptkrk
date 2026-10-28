@@ -75,12 +75,12 @@ class TvTests(unittest.TestCase):
 
     def test_vocal_settings_and_development_preview_flag(self):
         with patch.dict("os.environ", {
-            "KARAOKE_VOCAL_CALIBRATION_MS": "15000", "KARAOKE_VOCAL_USEFUL_PERCENT": "75",
+            "KARAOKE_VOCAL_CALIBRATION_MS": "15000", "KARAOKE_VOCAL_EVALUATION_MS": "25000",
             "NODE_ENV": "development",
         }):
             state = self.client.get("/api/tv/state").json()
             self.assertEqual(state["vocal_calibration_ms"], 15000)
-            self.assertEqual(state["vocal_useful_percent"], 75)
+            self.assertEqual(state["vocal_evaluation_ms"], 25000)
             self.assertTrue(state["development"])
             self.assertNotIn("show_live_score", state)
         with patch.dict("os.environ", {"NODE_ENV": "production"}):

@@ -89,11 +89,13 @@ test("pug feedback covers five states and clamps only the graphic, not points", 
   renderVocalFeedback(element, null, 20000);
   assert.equal(element.dataset.state, "waiting");
   assert.equal(nodes.get("progress").value, 0);
+  assert.equal(nodes.get(".vocal-points").hidden, true);
   assert.equal(nodes.get("progress").attributes["aria-label"], "Calibração da voz");
-  renderVocalFeedback(element, { level: -1, calibration_ms: 10000 });
+  renderVocalFeedback(element, { level: -1, calibration_ms: 10000 }, 20000);
   assert.equal(nodes.get("progress").value, 50);
   for (const [level, state] of ["bad", "falling", "good", "excellent"].entries()) {
-    renderVocalFeedback(element, { level, points: 1250, ranking_max: 1000, percent: 125 });
+    renderVocalFeedback(element, { level, points: 1250, ranking_max: 1000, percent: 125 }, 20000, true);
+    assert.equal(nodes.get(".vocal-points").hidden, false);
     assert.equal(element.dataset.state, state);
     assert.equal(nodes.get("progress").value, 100);
     assert.match(nodes.get(".vocal-points").textContent, /1\.250/);
@@ -102,4 +104,6 @@ test("pug feedback covers five states and clamps only the graphic, not points", 
       ["Vamos recuperar!", "Está se engasgando?!?", "Está indo bem...", "Dando show!"][level]);
     assert.equal(nodes.get("progress").attributes["aria-label"], "Solta a voz!");
   }
+  renderVocalFeedback(element, {level: 2, points: 750, ranking_max: 1000, percent: 75}, 20000, false);
+  assert.equal(nodes.get(".vocal-points").hidden, true);
 });

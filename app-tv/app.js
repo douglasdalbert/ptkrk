@@ -74,7 +74,7 @@ const vocalFeedback = document.querySelector("#vocal-feedback");
 const testPugButton = document.querySelector("#test-pug-action");
 let scoringMode = null;
 let vocalScore = null;
-let vocalCalibrationMs = 20000;
+let vocalCalibrationMs = 5000;
 let development = false;
 let pugPreview = -1;
 const missColor = "#f47783";
@@ -98,7 +98,7 @@ function updateVocalFeedback() {
     level: pugPreview - 1, points: pugPreview * rankingMax / 4,
     percent: pugPreview * 25, ranking_max: rankingMax,
   } : vocalScore;
-  renderVocalFeedback(vocalFeedback, score, vocalCalibrationMs);
+  renderVocalFeedback(vocalFeedback, score, vocalCalibrationMs, development);
 }
 
 testPugButton.addEventListener("click", () => {
@@ -551,7 +551,7 @@ function render(snapshot) {
   boostMultiplier = snapshot.boost_multiplier ?? boostMultiplier;
   rankingMax = snapshot.ranking_max ?? rankingMax;
   scoringMode = snapshot.scoring_mode;
-  vocalCalibrationMs = snapshot.vocal_calibration_ms ?? 20000;
+  vocalCalibrationMs = snapshot.vocal_calibration_ms ?? 5000;
   development = snapshot.development === true;
   document.querySelector("#current-score-action").hidden = !development;
   testPugButton.hidden = !development;

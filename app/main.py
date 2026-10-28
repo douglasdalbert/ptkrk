@@ -48,7 +48,7 @@ from app.scoring import (
     usable_caption_bars,
 )
 from app.separation import cancel_for_playback
-from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_useful_percent
+from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_evaluation_ms
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
 from app.search import search_karaoke, search_limit, search_with_captions
@@ -244,7 +244,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "scores": scores, "scoreboards": scoreboards, "ranking_max": max_score(),
                 "scoring_mode": scoring_mode,
                 "vocal_calibration_ms": vocal_calibration_ms(),
-                "vocal_useful_percent": vocal_useful_percent(),
+                "vocal_evaluation_ms": vocal_evaluation_ms(),
                 "development": os.getenv("NODE_ENV", "production").strip().lower() != "production",
                 "score_tolerance_ms": onset_tolerance_ms(),
                 "score_block_ms": block_duration_ms(),

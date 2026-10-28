@@ -270,6 +270,12 @@ def initialize() -> None:
             database.execute("ALTER TABLE song_scores ADD COLUMN boosted_blocks TEXT NOT NULL DEFAULT '[]'")
         if "scoring_mode" not in {row[1] for row in database.execute("PRAGMA table_info(score_history)")}:
             database.execute("ALTER TABLE score_history ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'captions'")
+        if "evaluated_ms" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_scores)")}:
+            database.execute("ALTER TABLE vocal_scores ADD COLUMN hit_ms INTEGER NOT NULL DEFAULT 0")
+            database.execute("ALTER TABLE vocal_scores ADD COLUMN evaluated_ms INTEGER NOT NULL DEFAULT 0")
+            database.execute(
+                "UPDATE vocal_scores SET hit_ms = hits * 1000, evaluated_ms = (hits + penalties) * 1000"
+            )
         if (database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'performances'").fetchone()
                 and database.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'performance_participants'").fetchone()):
             for performance in database.execute(

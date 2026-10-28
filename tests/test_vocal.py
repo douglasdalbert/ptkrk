@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from app.scoring import finalize_performance, record_block_result, score_snapshot, scoreboard_snapshot, usable_caption_bars
 from app.storage import connection, initialize
-from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_useful_percent
+from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_evaluation_ms, vocal_points
 
 
 class VocalTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class VocalTests(unittest.TestCase):
         self.media_patch = patch("app.storage.MEDIA_ROOT", self.root)
         self.environment = patch.dict("os.environ", {
             "KARAOKE_SCORE_MAX": "1000", "KARAOKE_VOCAL_CALIBRATION_MS": "20000",
-            "KARAOKE_VOCAL_USEFUL_PERCENT": "80",
+            "KARAOKE_VOCAL_EVALUATION_MS": "20000",
         })
         self.database_patch.start()
         self.media_patch.start()
@@ -49,15 +49,15 @@ class VocalTests(unittest.TestCase):
             score = self.sample(position)
         return score
 
-    def test_remaining_time_formula_and_calibration_uses_only_voiced_time(self):
+    def test_quality_formula_and_calibration_uses_only_voiced_time(self):
         score = self.calibrate()
         self.assertEqual(score["calibration_ms"], 20000)
         self.assertEqual(score["points"], 0)
         self.assertEqual(score["level"], 2)
-        self.assertAlmostEqual(score["point_rate"], 1000 / 150 / 0.8)
-        self.assertEqual(self.sample(31000)["points"], 8.3)
-        self.assertEqual(self.sample(32000, jitter=90)["points"], 4.2)
-        self.assertEqual(self.sample(33000, voiced=500)["points"], 8.3)
+        self.assertEqual(score["evaluated_ms"], 0)
+        self.assertEqual(self.sample(31000)["points"], 50)
+        self.assertEqual(self.sample(32000, jitter=90)["points"], 66.7)
+        self.assertEqual(self.sample(33000, voiced=500)["points"], 93.8)
 
     def test_short_and_long_songs_have_same_normalized_opportunity(self):
         for duration in (60000, 180000, 360000):
@@ -68,7 +68,7 @@ class VocalTests(unittest.TestCase):
                     self.sample(position, duration=duration)
                 for position in range(31000, duration + 1, 1000):
                     score = self.sample(position, duration=duration)
-                self.assertEqual(score["points"], 1250)
+                self.assertEqual(score["points"], 1000)
 
     def test_three_hits_raise_five_misses_lower_and_opposite_resets(self):
         self.calibrate()
@@ -87,7 +87,8 @@ class VocalTests(unittest.TestCase):
         for position in range(45000, 70000, 1000):
             score = self.sample(position, jitter=100)
         self.assertEqual(score["level"], 0)
-        self.assertEqual(score["points"], 0)
+        self.assertGreater(score["points"], 0)
+        self.assertLess(score["points"], 1000)
 
     def test_duplicates_overlap_invalid_and_uncertain_samples_do_not_count(self):
         score = self.sample(1000)
@@ -115,8 +116,8 @@ class VocalTests(unittest.TestCase):
         self.calibrate()
         self.sample(31000)
         self.assertEqual(self.sample(32000, loudness=0.1)["result"], "miss")
-        self.assertEqual(self.sample(33000, loudness=0.1)["points"], 0)
-        self.assertEqual(self.sample(34000, loudness=0.1)["points"], 0)
+        self.assertEqual(self.sample(33000, loudness=0.1)["points"], 75)
+        self.assertEqual(self.sample(34000, loudness=0.1)["points"], 80)
 
     def test_caption_tracks_with_only_empty_text_use_vocal_scoring(self):
         self.captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
@@ -170,12 +171,12 @@ class VocalTests(unittest.TestCase):
         self.assertEqual(self.sample(31000)["result"], "hit")
         self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["mode"], "vocal")
 
-    def test_live_overflow_is_capped_in_history_and_after_reinitialization(self):
+    def test_quality_score_is_preserved_in_history_and_after_reinitialization(self):
         self.calibrate()
         for position in range(31000, 181000, 1000):
             self.sample(position)
         final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
-        self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["points"], 1250)
+        self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["points"], 1000)
         self.assertEqual(final["points"], 1000)
         self.assertEqual(scoreboard_snapshot(self.database, "s")["personal_best"]["points"], 1000)
         self.database.execute("UPDATE score_history SET points = 1250 WHERE request_id = 'r'")
@@ -183,17 +184,52 @@ class VocalTests(unittest.TestCase):
         initialize()
         self.assertEqual(scoreboard_snapshot(self.database, "s")["personal_best"]["points"], 1000)
 
-    def test_live_overflow_absorbs_penalties_before_final_cap(self):
+    def test_errors_reduce_quality_after_minimum_evidence(self):
         self.calibrate()
         for position in range(31000, 171000, 1000):
             self.sample(position)
         score = self.sample(171000, jitter=100)
-        self.assertGreater(score["points"], 1000)
-        self.assertLess(score["points"], 1250)
+        self.assertGreater(score["points"], 990)
+        self.assertLess(score["points"], 1000)
         final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
-        self.assertEqual(final["points"], 1000)
+        self.assertEqual(final["points"], score["points"])
+
+    def test_exact_quality_examples_and_minimum_evidence(self):
+        for hits, errors, expected in [(39, 0, 1000), (39, 5, 939.8), (39, 10, 886.4), (20, 20, 666.7)]:
+            self.assertEqual(round(vocal_points(hits * 1000, (hits + errors) * 1000), 1), expected)
+        self.assertEqual(vocal_points(1000, 1000), 50)
+        self.assertEqual(vocal_points(10000, 10000), 500)
+        self.assertEqual(vocal_points(0, 20000), 0)
+        self.assertEqual(vocal_points(0, 0), 0)
+        with patch.dict("os.environ", {"KARAOKE_SCORE_MAX": "2000", "KARAOKE_VOCAL_EVALUATION_MS": "10000"}):
+            self.assertEqual(vocal_points(10000, 10000), 2000)
+
+    def test_quality_durations_survive_reinitialization_without_double_counting(self):
+        self.calibrate()
+        self.sample(31000, voiced=500)
+        self.sample(32000, jitter=100)
+        self.database.commit()
+        initialize()
+        initialize()
+        score = score_snapshot(self.database, "r", self.captions)[0]
+        self.assertEqual(score["evaluated_ms"], 1500)
+        self.assertEqual(score["points"], 37.5)
+
+    def test_legacy_active_scores_migrate_to_quality_without_resetting_calibration(self):
+        self.database.execute("ALTER TABLE vocal_scores DROP COLUMN hit_ms")
+        self.database.execute("ALTER TABLE vocal_scores DROP COLUMN evaluated_ms")
+        self.database.execute(
+            "INSERT INTO vocal_scores(request_id,singer_id,calibration_ms,point_rate,hits,penalties,points) "
+            "VALUES ('r','s',20000,17.35,39,5,633)"
+        )
+        self.database.commit()
+        initialize()
+        score = score_snapshot(self.database, "r", self.captions)[0]
+        self.assertEqual(score["level"], 2)
+        self.assertEqual(score["evaluated_ms"], 44000)
+        self.assertEqual(score["points"], 939.8)
 
     def test_settings_are_bounded(self):
-        with patch.dict("os.environ", {"KARAOKE_VOCAL_CALIBRATION_MS": "0", "KARAOKE_VOCAL_USEFUL_PERCENT": "101"}):
+        with patch.dict("os.environ", {"KARAOKE_VOCAL_CALIBRATION_MS": "0", "KARAOKE_VOCAL_EVALUATION_MS": "999999"}):
             self.assertEqual(vocal_calibration_ms(), 1000)
-            self.assertEqual(vocal_useful_percent(), 100)
+            self.assertEqual(vocal_evaluation_ms(), 120000)

@@ -7,11 +7,18 @@ from app.scoring import integer_setting, max_score, usable_caption_bars
 
 
 def vocal_calibration_ms() -> int:
-    return integer_setting("KARAOKE_VOCAL_CALIBRATION_MS", 20000, 1000, 120000)
+    return integer_setting("KARAOKE_VOCAL_CALIBRATION_MS", 5000, 1000, 120000)
 
 
-def vocal_useful_percent() -> int:
-    return integer_setting("KARAOKE_VOCAL_USEFUL_PERCENT", 80, 1, 100)
+def vocal_evaluation_ms() -> int:
+    return integer_setting("KARAOKE_VOCAL_EVALUATION_MS", 20000, 1000, 120000)
+
+
+def vocal_points(hit_ms: int, evaluated_ms: int) -> float:
+    if evaluated_ms <= 0:
+        return 0.0
+    quality = hit_ms / (hit_ms + (evaluated_ms - hit_ms) * 0.5) if hit_ms else 0
+    return max_score() * quality * min(1, evaluated_ms / vocal_evaluation_ms())
 
 
 def has_timed_captions(path: Path | None) -> bool:
@@ -28,15 +35,16 @@ def vocal_snapshot(database: sqlite3.Connection, request_id: str) -> list[dict]:
         "singer_id": row["singer_id"],
         "name": row["name"],
         "mode": "vocal",
-        "points": round(row["points"], 1),
-        "percent": round(row["points"] * 100 / max_score(), 1),
+        "points": round(vocal_points(row["hit_ms"], row["evaluated_ms"]), 1),
+        "percent": round(vocal_points(row["hit_ms"], row["evaluated_ms"]) * 100 / max_score(), 1),
         "ranking_max": max_score(),
         "hits": row["hits"],
         "penalties": row["penalties"],
         "calibration_ms": row["calibration_ms"],
         "calibration_target_ms": vocal_calibration_ms(),
         "level": row["level"] if row["point_rate"] is not None else -1,
-        "point_rate": row["point_rate"],
+        "evaluated_ms": row["evaluated_ms"],
+        "evaluation_target_ms": vocal_evaluation_ms(),
     } for row in database.execute(
         "SELECT vocal_scores.*, singers.name FROM vocal_scores "
         "JOIN singers ON singers.id = vocal_scores.singer_id WHERE request_id = ? ORDER BY singers.name",
@@ -74,20 +82,24 @@ def record_vocal_sample(
     loudness_sum, jitter_sum = row["loudness_sum"], row["jitter_sum"]
     rate = row["point_rate"]
     points, hits, penalties = row["points"], row["hits"], row["penalties"]
+    hit_ms, evaluated_ms = row["hit_ms"], row["evaluated_ms"]
     level, good, bad = row["level"], row["good_streak"], row["bad_streak"]
     result = "calibrating"
     if rate is None:
         calibration += voiced_ms
         loudness_sum += loudness * voiced_ms
         jitter_sum += jitter * voiced_ms
-        if calibration >= vocal_calibration_ms() and duration_ms > position_ms:
-            rate = max_score() / ((duration_ms - position_ms) / 1000) / (vocal_useful_percent() / 100)
+        if calibration >= vocal_calibration_ms():
+            # The legacy nullable rate column now only marks completed calibration.
+            rate = 0
     else:
         # Compare short-term changes, not absolute notes: melodic transitions are handled by the singer.
         tolerance = max(45, min(70, jitter_sum / calibration * 1.8))
         hit = jitter <= tolerance and loudness >= loudness_sum / calibration * 0.55
         result = "hit" if hit else "miss"
-        points = max(0, points + rate * voiced_ms / 1000 * (1 if hit else -0.5))
+        evaluated_ms += voiced_ms
+        hit_ms += voiced_ms if hit else 0
+        points = vocal_points(hit_ms, evaluated_ms)
         hits += int(hit)
         penalties += int(not hit)
         good, bad = (good + 1, 0) if hit else (0, bad + 1)
@@ -97,10 +109,11 @@ def record_vocal_sample(
             level, bad = max(0, level - 1), 0
     database.execute(
         "UPDATE vocal_scores SET calibration_ms = ?, loudness_sum = ?, jitter_sum = ?, point_rate = ?, "
-        "points = ?, hits = ?, penalties = ?, level = ?, good_streak = ?, bad_streak = ?, last_position_ms = ? "
+        "points = ?, hits = ?, penalties = ?, level = ?, good_streak = ?, bad_streak = ?, last_position_ms = ?, "
+        "hit_ms = ?, evaluated_ms = ? "
         "WHERE request_id = ? AND singer_id = ?",
         (calibration, loudness_sum, jitter_sum, rate, points, hits, penalties, level, good, bad,
-         position_ms, request_id, singer_id),
+         position_ms, hit_ms, evaluated_ms, request_id, singer_id),
     )
     score = next(score for score in vocal_snapshot(database, request_id) if score["singer_id"] == singer_id)
     return {**score, "type": "score_update", "request_id": request_id, "result": result}
