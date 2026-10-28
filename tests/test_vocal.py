@@ -118,6 +118,16 @@ class VocalTests(unittest.TestCase):
         self.assertEqual(self.sample(33000, loudness=0.1)["points"], 0)
         self.assertEqual(self.sample(34000, loudness=0.1)["points"], 0)
 
+    def test_caption_tracks_with_only_empty_text_use_vocal_scoring(self):
+        self.captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
+            {"block_index": index, "text": text, "start_ms": index * 1000, "end_ms": (index + 1) * 1000}
+            for index, text in enumerate(["", "  ", "\n\t", None])
+        ]}), encoding="utf-8")
+        self.assertFalse(has_timed_captions(self.captions))
+        self.calibrate()
+        self.assertEqual(self.sample(31000)["result"], "hit")
+        self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["mode"], "vocal")
+
     def test_live_overflow_is_capped_in_history_and_after_reinitialization(self):
         self.calibrate()
         for position in range(31000, 181000, 1000):

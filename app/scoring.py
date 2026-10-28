@@ -96,6 +96,13 @@ def boost_multiplier() -> float:
     return max(1.0, min(5.0, value)) if math.isfinite(value) else 1.5
 
 
+def usable_caption_bars(captions: dict) -> list[dict]:
+    return [
+        bar for bar in captions.get("bars", [])
+        if "text" not in bar or (isinstance(bar["text"], str) and bar["text"].strip())
+    ]
+
+
 def matching_block(bars: list[dict], position_ms: int) -> int | None:
     matches = [
         bar for bar in bars
@@ -150,7 +157,7 @@ def record_onset(
         captions = json.loads(caption_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    bars = captions.get("bars", [])
+    bars = usable_caption_bars(captions)
     total_blocks = len(bars)
     if total_blocks == 0 or not 0 <= position_ms <= captions.get("duration_ms", 0):
         return None
@@ -228,7 +235,7 @@ def record_block_result(
     if not caption_path.is_file():
         return None
     try:
-        bars = json.loads(caption_path.read_text(encoding="utf-8")).get("bars", [])
+        bars = usable_caption_bars(json.loads(caption_path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return None
     if not any(int(bar.get("block_index", index)) == block_index for index, bar in enumerate(bars)):
@@ -311,7 +318,7 @@ def record_offcue_penalty(
         captions = json.loads(caption_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    total_blocks = len(captions.get("bars", []))
+    total_blocks = len(usable_caption_bars(captions))
     if total_blocks == 0 or not 0 <= position_ms <= captions.get("duration_ms", 0):
         return None
 
@@ -371,7 +378,7 @@ def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: 
     total_blocks = 0
     if caption_path and caption_path.is_file():
         try:
-            total_blocks = len(json.loads(caption_path.read_text(encoding="utf-8")).get("bars", []))
+            total_blocks = len(usable_caption_bars(json.loads(caption_path.read_text(encoding="utf-8"))))
         except (OSError, json.JSONDecodeError):
             pass
     if not total_blocks:

@@ -87,6 +87,24 @@ class TvTests(unittest.TestCase):
         self.assertIn('id="current-score-action" type="button" disabled hidden', self.client.get("/tv").text)
         self.assertEqual(self.client.get("/assets/vocal-pugs.svg").status_code, 200)
 
+    def test_empty_caption_text_is_karaoke_in_state_and_media(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+        captions = Path(self.directory.name) / generation / "captions" / "glvVYIhdWlU.json"
+        captions.parent.mkdir(parents=True)
+        captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
+            {"block_index": 0, "text": " \n ", "start_ms": 0, "end_ms": 1000},
+            {"block_index": 1, "text": "", "start_ms": 1000, "end_ms": 2000},
+        ]}), encoding="utf-8")
+        state = self.client.get("/api/tv/state").json()
+        self.assertEqual(state["scoring_mode"], "vocal")
+        self.assertEqual(main_module.party_snapshot(include_caption_bars=True)["active_bars"], [])
+        self.assertEqual(self.client.get("/api/tv/song/captions").json()["bars"], [])
+
     def test_vocal_socket_calibrates_scores_reconnects_and_rejects_caption_mode(self):
         identity = self.client.post("/api/singers", json={"name": "Constância"}).json()
         with connection() as database:

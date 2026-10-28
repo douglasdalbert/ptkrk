@@ -89,6 +89,7 @@ test("pug feedback covers five states and clamps only the graphic, not points", 
   renderVocalFeedback(element, null, 20000);
   assert.equal(element.dataset.state, "waiting");
   assert.equal(nodes.get("progress").value, 0);
+  assert.equal(nodes.get("progress").attributes["aria-label"], "Calibração da voz");
   renderVocalFeedback(element, { level: -1, calibration_ms: 10000 });
   assert.equal(nodes.get("progress").value, 50);
   for (const [level, state] of ["bad", "falling", "good", "excellent"].entries()) {
@@ -97,5 +98,8 @@ test("pug feedback covers five states and clamps only the graphic, not points", 
     assert.equal(nodes.get("progress").value, 100);
     assert.match(nodes.get(".vocal-points").textContent, /1\.250/);
     assert.equal(nodes.get("use").attributes.href, `/assets/vocal-pugs.svg#${state}`);
+    assert.equal(nodes.get(".vocal-label").textContent,
+      ["Vamos recuperar!", "Está se engasgando?!?", "Está indo bem...", "Dando show!"][level]);
+    assert.equal(nodes.get("progress").attributes["aria-label"], "Solta a voz!");
   }
 });

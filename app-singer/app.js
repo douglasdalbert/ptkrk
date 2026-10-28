@@ -1,6 +1,6 @@
 import { ConfirmDialog } from "./confirm-dialog.js";
 import { VocalSampler } from "./vocal-analysis.js";
-import { renderVocalFeedback } from "./vocal-feedback.js";
+import { renderVocalFeedback, vocalLabels } from "./vocal-feedback.js";
 
 const storageKey = "karaoke.singer";
 const entry = document.querySelector("#entry");
@@ -283,7 +283,7 @@ function connect() {
       if (message.mode === "vocal") {
         renderVocalFeedback(vocalFeedback, message, vocalCalibrationMs);
         scoreStatus.textContent = message.result === "calibrating" ? "Cante para conhecer seu padrão de voz." :
-          message.result === "hit" ? "Boa constância!" : "Tente recuperar a constância, sem forçar a voz.";
+          vocalLabels[Math.max(0, Math.min(3, message.level))];
         return;
       }
       const action = message.result === "hit" ? "Acertou" : "Som fora de um bloco";
@@ -867,7 +867,7 @@ microphoneButton.addEventListener("click", async () => {
     microphoneStatePositioned = false;
     drawMicrophoneWaveform();
     scoreStatus.textContent = scoringMode === "vocal" ?
-      "Microfone ativo. Cante para calibrar a constância vocal." : "Microfone ativo. Cante junto com as barras.";
+      "Microfone ativo. Solta a voz! Cante para calibrar." : "Microfone ativo. Cante junto com as barras.";
     microphoneButton.textContent = "Microfone ativo";
     sampleMicrophone();
   } catch {

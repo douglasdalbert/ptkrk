@@ -45,6 +45,7 @@ from app.scoring import (
     star_high_percent,
     star_low_percent,
     star_nice_percent,
+    usable_caption_bars,
 )
 from app.separation import cancel_for_playback
 from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_useful_percent
@@ -226,7 +227,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                     pass
             if include_caption_bars and captions and captions.is_file():
                 try:
-                    active_bars = json.loads(captions.read_text(encoding="utf-8")).get("bars", [])
+                    active_bars = usable_caption_bars(json.loads(captions.read_text(encoding="utf-8")))
                 except (OSError, json.JSONDecodeError):
                     active_bars = []
             else:
@@ -882,7 +883,7 @@ def tv_media(request_id: str, kind: str) -> Response:
             captions = json.loads(selected_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             raise HTTPException(404, "Mídia indisponível")
-        return JSONResponse({**captions, "tracks": bundle.get("tracks", []),
+        return JSONResponse({**captions, "bars": usable_caption_bars(captions), "tracks": bundle.get("tracks", []),
                              "default_track_id": bundle.get("default_track_id"),
                              "selected_track_id": selected_id})
     category, suffix = {

@@ -3,7 +3,7 @@ import math
 import sqlite3
 from pathlib import Path
 
-from app.scoring import integer_setting, max_score
+from app.scoring import integer_setting, max_score, usable_caption_bars
 
 
 def vocal_calibration_ms() -> int:
@@ -18,7 +18,7 @@ def has_timed_captions(path: Path | None) -> bool:
     if path is None or not path.is_file():
         return False
     try:
-        return bool(json.loads(path.read_text(encoding="utf-8")).get("bars"))
+        return bool(usable_caption_bars(json.loads(path.read_text(encoding="utf-8"))))
     except (OSError, json.JSONDecodeError):
         return False
 
