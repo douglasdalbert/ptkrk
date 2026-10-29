@@ -5,6 +5,22 @@ import { runInNewContext } from "node:vm";
 
 const tvSource = readFileSync(new URL("../app-tv/app.js", import.meta.url), "utf8");
 const singerSource = readFileSync(new URL("../app-singer/app.js", import.meta.url), "utf8");
+const tvStyles = readFileSync(new URL("../app-tv/style.css", import.meta.url), "utf8");
+
+test("energy gradient closes its color cycle and scrolls exactly one tile in every state", () => {
+  const fill = tvStyles.match(/^\.boost-fill \{([^}]+)\}/m)[1];
+  const colors = fill.match(/linear-gradient\(90deg,([^)]+)\)/)[1].split(",");
+  assert.deepEqual(colors, ["#39ff88", "#4080ff", "#ff4d4d", "#39ff88"]);
+  const tileScale = Number(fill.match(/background-size:(\d+)%/)[1]) / 100;
+  const flow = tvStyles.match(/@keyframes boost-flow \{ to \{([^}]+)\}/)[1];
+  const endPosition = Number(flow.match(/background-position:([-\d]+)%/)[1]) / 100;
+  assert.equal((1 - tileScale) * endPosition, tileScale);
+  for (const state of ["full", "active"]) {
+    const rule = tvStyles.match(new RegExp(`\\.boost-bar\\[data-state="${state}"\\] \\.boost-fill \\{([^}]+)\\}`))[1];
+    assert.doesNotMatch(rule, /background(?:-size|-image|-position|-repeat)?:/);
+    assert.match(rule, /animation:boost-flow/);
+  }
+});
 
 function element() {
   return {

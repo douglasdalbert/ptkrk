@@ -90,12 +90,12 @@ button { cursor:pointer; }
 @media (max-width:700px) { .tv-footer { grid-template-columns:minmax(0,1fr) minmax(145px,auto) 122px; } .actions { flex-basis:145px; } .caption-switcher { flex-basis:clamp(118px,20vw,140px); min-width:110px; } .actions > button { flex-wrap:wrap; min-height:39px; } .join img { width:78px; height:78px; } }
 
 .boost-bar { --boost:0; position:relative; overflow:hidden; background:#0d0f12; border-top:1px solid #2b3134; }
-.boost-fill { position:absolute; inset:0; transform:scaleX(var(--boost)); transform-origin:left center; background:linear-gradient(90deg,#ff5e9c,#ffcf4f 45%,#c9fa45 70%,#6bded0); background-size:200% 100%; box-shadow:0 0 14px #ff5e9c88; transition:transform .45s cubic-bezier(.2,.9,.3,1.2); animation:boost-flow 3s linear infinite; }
+.boost-fill { position:absolute; inset:0; transform:scaleX(var(--boost)); transform-origin:left center; background:linear-gradient(90deg,#39ff88,#4080ff,#ff4d4d,#39ff88); background-size:200% 100%; box-shadow:0 0 14px #ff5e9c88; transition:transform .45s cubic-bezier(.2,.9,.3,1.2); animation:boost-flow 3s linear infinite; }
 .boost-fill::after { content:""; position:absolute; inset:0; background:repeating-linear-gradient(115deg,#ffffff00 0 14px,#ffffff38 14px 22px); background-size:44px 100%; animation:boost-stripes .8s linear infinite; }
 .boost-label { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; text-shadow:0 0 4px #000,0 0 2px #000; white-space:nowrap; }
 .boost-bar[data-state="full"] .boost-fill { animation:boost-flow 1.5s linear infinite,boost-breathe 1.6s ease-in-out infinite; }
 .boost-bar.just-filled .boost-fill { animation:boost-flow 1.5s linear infinite,boost-filled 1.1s ease-out; }
-.boost-bar[data-state="active"] .boost-fill { transition:none; background:linear-gradient(90deg,#ff2bd6,#7a5cff,#00e5ff,#39ff88,#fff34d,#ff2bd6); background-size:300% 100%; animation:boost-flow .9s linear infinite; box-shadow:0 0 20px #ff2bd6,0 0 36px #00e5ff99; }
+.boost-bar[data-state="active"] .boost-fill { transition:none; animation:boost-flow .9s linear infinite; box-shadow:0 0 20px #ff2bd6,0 0 36px #00e5ff99; }
 @keyframes boost-flow { to { background-position:-200% 0; } }
 @keyframes boost-stripes { to { background-position:44px 0; } }
 @keyframes boost-breathe { 50% { filter:brightness(1.3) saturate(1.3); box-shadow:0 0 24px #c9fa45cc; } }
