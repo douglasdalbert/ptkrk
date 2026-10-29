@@ -780,7 +780,7 @@ function sendBoostRequest(requestId) {
 }
 
 singerBoostButton.addEventListener("click", () => {
-  if (singerBoostButton.disabled || singerBoostButton.hidden || scoringMode !== "captions") return;
+  if (singerBoostButton.disabled || singerBoostButton.hidden) return;
   if (socket?.readyState !== WebSocket.OPEN) {
     scoreStatus.textContent = "Aguardando conexão para ativar o especial.";
     return;
@@ -820,7 +820,7 @@ function sampleMicrophone() {
       sendMicrophoneActivity(true, requestId, position);
       microphoneStatePositioned = true;
     }
-    if (microphoneSpeaking && position !== null && scoringMode !== "vocal") trackLoudness(rms, requestId);
+    if (microphoneSpeaking && position !== null) trackLoudness(rms, requestId);
     if (loudFrameCount >= 2 && requestId && position === null) {
       scoreStatus.textContent = "Aguardando sincronismo da TV.";
     }
@@ -1079,17 +1079,18 @@ function renderSkip(message) {
   allowSkip = message.allow_skip;
   const participant = currentSong && singer && (currentSong.singer_id === singer.singer_id ||
     currentSong.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
-  boostButton.hidden = scoringMode === "vocal" || !message.invitation?.accepted || !currentSong || !!participant || !!currentSkip;
+  const boostSpent = scoringMode === "vocal" && message.boost_used && !message.boost_active;
+  boostButton.hidden = boostSpent || !message.invitation?.accepted || !currentSong || !!participant || !!currentSkip;
   const boostReady = !!message.boost_ready && !message.boost_active;
   const eligible = currentSong && singer && (currentSong.singer_id === singer.singer_id ?
     message.invitation?.lead_accepted : currentSong.backvocals.some(vocal =>
       vocal.singer_id === singer.singer_id && vocal.joined === 1 && vocal.accepted && vocal.score_eligible));
-  singerBoostButton.hidden = scoringMode !== "captions" || !message.invitation?.accepted ||
+  singerBoostButton.hidden = boostSpent || !message.invitation?.accepted ||
     !participant || !eligible || !!currentSkip;
   singerBoostButton.disabled = !boostReady;
   singerBoostButton.dataset.ready = String(boostReady);
   singerBoostButton.textContent = message.boost_active ? "Especial ativo!" :
-    boostReady ? "Ativar especial" : "Carregando especial...";
+    boostReady ? "Usar energia acumulada" : "Carregando especial...";
   boostButton.disabled = !boostReady;
   boostButton.dataset.ready = String(boostReady);
   skippingView.hidden = !currentSkip;

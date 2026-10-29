@@ -48,7 +48,10 @@ from app.scoring import (
     usable_caption_bars,
 )
 from app.separation import cancel_for_playback
-from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_evaluation_ms
+from app.vocal import (
+    has_timed_captions, record_vocal_sample, vocal_boost_charge, vocal_boost_fill_ms,
+    vocal_calibration_ms, vocal_evaluation_ms,
+)
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
 from app.search import search_karaoke, search_limit, search_with_captions
@@ -208,6 +211,8 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                             and boost_state.get("request_id") == invitation["request_id"])
         boost_ready = bool(invitation and boost_state and boost_state.get("ready")
                            and boost_state.get("request_id") == invitation["request_id"])
+        boost_used = bool(invitation and boost_state and boost_state.get("used")
+                          and boost_state.get("request_id") == invitation["request_id"])
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
         scoreboards = {singer["id"]: scoreboard_snapshot(database, singer["id"]) for singer in singers}
         scores = []
@@ -239,6 +244,10 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
             else:
                 active_bars = []
             scores = score_snapshot(database, invitation["request_id"], captions)
+            if scoring_mode == "vocal":
+                boost_ready = not boost_used and not boost_active and vocal_boost_charge(
+                    database, invitation["request_id"]
+                ) >= 1
         else:
             active_bars = []
     snapshot = {"type": "requests", "items": request_snapshot(), "invitation": invitation,
@@ -248,6 +257,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "scoring_mode": scoring_mode,
                 "vocal_calibration_ms": vocal_calibration_ms(),
                 "vocal_evaluation_ms": vocal_evaluation_ms(),
+                "vocal_boost_fill_ms": vocal_boost_fill_ms(),
                 "development": os.getenv("NODE_ENV", "production").strip().lower() != "production",
                 "score_tolerance_ms": onset_tolerance_ms(),
                 "score_block_ms": block_duration_ms(),
@@ -265,7 +275,8 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "star_nice_percent": star_nice_percent(),
                 "star_close_ms": star_close_ms(),
                 "boost_active": boost_active,
-                "boost_ready": boost_ready}
+                "boost_ready": boost_ready,
+                "boost_used": boost_used}
     if include_caption_bars:
         snapshot["active_bars"] = active_bars
     return snapshot
@@ -475,10 +486,30 @@ async def requests_socket(websocket: WebSocket) -> None:
                         or not isinstance(ready, bool)):
                     continue
                 with connection() as database:
+                    database.execute("BEGIN IMMEDIATE")
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    item = database.execute(
+                        "SELECT video_id, caption_track_id, force_karaoke FROM requests WHERE id = ?", (request_id,)
+                    ).fetchone()
+                    generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
+                    vocal_mode = not has_timed_captions(request_caption_path(generation, item))
+                    previous = database.execute("SELECT value FROM runtime_state WHERE key = 'boost_state'").fetchone()
+                    previous = json.loads(previous["value"]) if previous else {}
+                    same_request = previous.get("request_id") == request_id
+                    used = vocal_mode and same_request and previous.get("used", False)
+                    if vocal_mode:
+                        if active and not (same_request and previous.get("active")) and (
+                            used or vocal_boost_charge(database, request_id) < 1
+                        ):
+                            continue
+                        used = used or active
+                        ready = not used and vocal_boost_charge(database, request_id) >= 1
                     database.execute(
                         "INSERT INTO runtime_state(key, value) VALUES ('boost_state', ?) "
                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                        (json.dumps({"request_id": request_id, "active": active, "ready": ready}),),
+                        (json.dumps({"request_id": request_id, "active": active, "ready": ready, "used": used}),),
                     )
                 continue
             if is_tv and message.get("type") == "block_result":

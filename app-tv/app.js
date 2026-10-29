@@ -21,6 +21,8 @@ let boostFillPercent = 25;
 let boostDurationMs = 15000;
 let boostMultiplier = 1.5;
 let boostCharge = 0;
+let vocalBoostFillMs = 40000;
+let boostUsed = false;
 let boostRemainingMs = 0;
 let boostFrameAt = null;
 let boostedBlocks = new Set();
@@ -133,6 +135,7 @@ function formatNumber(value, digits = 1) {
 
 function updateBoostBar() {
   const active = boostRemainingMs > 0;
+  boostBar.style.visibility = scoringMode === "vocal" && boostUsed && !active ? "hidden" : "";
   const level = active ? boostRemainingMs / boostDurationMs : boostCharge;
   boostBar.style.setProperty("--boost", level.toFixed(4));
   boostBar.dataset.state = active ? "active" : boostCharge >= 1 ? "full" : "charging";
@@ -153,6 +156,7 @@ function sendBoostState() {
 function resetBoost() {
   const wasShared = boostRemainingMs > 0 || boostCharge >= 1;
   boostCharge = 0;
+  boostUsed = false;
   boostRemainingMs = 0;
   boostFrameAt = null;
   boostedBlocks = new Set();
@@ -186,7 +190,8 @@ boostBar.addEventListener("animationend", event => {
 });
 
 function startBoost() {
-  if (!activeId || boostCharge < 1 || boostRemainingMs > 0) return;
+  if (!activeId || boostCharge < 1 || boostRemainingMs > 0 || (scoringMode === "vocal" && boostUsed)) return;
+  if (scoringMode === "vocal") boostUsed = true;
   boostRemainingMs = boostDurationMs;
   boostFrameAt = video.paused ? null : performance.now();
   show.classList.add("boost-active");
@@ -201,6 +206,19 @@ function endBoost() {
   show.classList.remove("boost-active");
   updateBoostBar();
   sendBoostState();
+}
+
+function updateVocalBoost(score) {
+  if (scoringMode !== "vocal" || boostUsed || !activeId) return;
+  const wasFull = boostCharge >= 1;
+  boostCharge = Math.min(1, (score?.singing_ms || 0) / vocalBoostFillMs);
+  if (!wasFull && boostCharge >= 1) {
+    boostBar.classList.remove("just-filled");
+    void boostBar.offsetWidth;
+    boostBar.classList.add("just-filled");
+    sendBoostState();
+  }
+  updateBoostBar();
 }
 
 function tickBoost() {
@@ -549,6 +567,7 @@ function render(snapshot) {
   boostFillPercent = snapshot.boost_fill_percent ?? boostFillPercent;
   boostDurationMs = snapshot.boost_duration_ms ?? boostDurationMs;
   boostMultiplier = snapshot.boost_multiplier ?? boostMultiplier;
+  vocalBoostFillMs = snapshot.vocal_boost_fill_ms ?? vocalBoostFillMs;
   rankingMax = snapshot.ranking_max ?? rankingMax;
   scoringMode = snapshot.scoring_mode;
   vocalCalibrationMs = snapshot.vocal_calibration_ms ?? 5000;
@@ -556,7 +575,6 @@ function render(snapshot) {
   document.querySelector("#current-score-action").hidden = !development;
   testPugButton.hidden = !development;
   if (!development) pugPreview = -1;
-  boostBar.style.visibility = scoringMode === "vocal" ? "hidden" : "";
   document.querySelector("#current-score-max").textContent = String(rankingMax);
   starLowPercent = snapshot.star_low_percent ?? starLowPercent;
   starHighPercent = snapshot.star_high_percent ?? starHighPercent;
@@ -579,6 +597,12 @@ function render(snapshot) {
     stopPlayback();
   }
   const leadScore = activeId && snapshot.scores?.find(score => score.singer_id === activeSingerId);
+  if (scoringMode === "vocal" && activeId) {
+    boostUsed = boostUsed || !!snapshot.boost_used;
+    if (boostUsed && snapshot.boost_active && boostRemainingMs <= 0) sendBoostState();
+    updateVocalBoost(leadScore);
+    updateBoostBar();
+  }
   lyricTrack.hidden = !activeId || scoringMode === "vocal";
   if (activeId && Array.isArray(snapshot.active_bars)) {
     captionBars = snapshot.active_bars;
@@ -669,6 +693,8 @@ function connect() {
         currentScoreValue.textContent = String(Math.round(activeScorePoints));
         if (message.mode === "vocal") {
           vocalScore = message;
+          updateVocalBoost(message);
+          if (message.boosted) spawnBoostStar();
           updateVocalFeedback();
         }
       }

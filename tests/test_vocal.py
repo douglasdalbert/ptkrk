@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 from app.scoring import finalize_performance, record_block_result, score_snapshot, scoreboard_snapshot, usable_caption_bars
 from app.storage import connection, initialize
-from app.vocal import has_timed_captions, record_vocal_sample, vocal_calibration_ms, vocal_evaluation_ms, vocal_points
+from app.vocal import (
+    has_timed_captions, record_vocal_sample, vocal_boost_charge, vocal_boost_fill_ms,
+    vocal_calibration_ms, vocal_evaluation_ms, vocal_points,
+)
 
 
 class VocalTests(unittest.TestCase):
@@ -59,6 +62,75 @@ class VocalTests(unittest.TestCase):
         self.assertEqual(self.sample(31000)["points"], 25)
         self.assertEqual(self.sample(32000, jitter=90)["points"], 25)
         self.assertEqual(self.sample(33000, voiced=500)["points"], 37.5)
+
+    def test_energy_uses_valid_singing_time_including_calibration(self):
+        with patch.dict("os.environ", {"KARAOKE_VOCAL_BOOST_FILL_MS": "40000"}):
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0)
+            self.calibrate()
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.5)
+            self.sample(31000, voiced=500)
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.5125)
+            self.assertIsNone(self.sample(31000, voiced=500))
+            self.assertIsNone(self.sample(32000, voiced=0))
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.5125)
+            self.assertEqual(self.sample(100000, jitter=100)["singing_ms"], 21500)
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.5375)
+            self.database.execute("UPDATE vocal_scores SET evaluated_ms = 19999")
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.999975)
+            self.database.execute("UPDATE vocal_scores SET evaluated_ms = 20000")
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 1)
+
+    def test_special_multiplies_only_hits_and_persists_bonus_without_double_counting(self):
+        with patch.dict("os.environ", {"KARAOKE_BOOST_MULTIPLIER": "2"}):
+            self.calibrate()
+            self.assertEqual(self.sample(31000)["points"], 25)
+            self.database.execute(
+                "INSERT INTO runtime_state(key, value) VALUES ('boost_state', ?)",
+                (json.dumps({"request_id": "r", "active": True, "used": True}),),
+            )
+            hit = self.sample(32000)
+            self.assertTrue(hit["boosted"])
+            self.assertEqual(hit["points"], 75)
+            self.assertIsNone(self.sample(32000))
+            miss = self.sample(33000, jitter=100)
+            self.assertFalse(miss["boosted"])
+            self.assertEqual(miss["boosted_ms"], 1000)
+            self.assertEqual(miss["points"], 75)
+            half = self.sample(34000, voiced=500)
+            self.assertEqual(half["points"], 100)
+            self.database.execute("UPDATE runtime_state SET value = ? WHERE key = 'boost_state'",
+                                  (json.dumps({"request_id": "r", "active": False, "used": True}),))
+            self.assertEqual(self.sample(35000)["points"], 125)
+            self.database.commit()
+            initialize()
+            initialize()
+            restored = score_snapshot(self.database, "r", self.captions)[0]
+            self.assertEqual(restored["boosted_ms"], 1500)
+            self.assertEqual(restored["points"], 125)
+
+    def test_other_song_special_does_not_boost_vocals_and_final_score_keeps_cap(self):
+        with patch.dict("os.environ", {"KARAOKE_BOOST_MULTIPLIER": "3"}):
+            self.calibrate()
+            self.database.execute(
+                "INSERT INTO runtime_state(key, value) VALUES ('boost_state', ?)",
+                (json.dumps({"request_id": "other", "active": True}),),
+            )
+            self.assertFalse(self.sample(31000)["boosted"])
+            self.database.execute("UPDATE vocal_scores SET hit_ms = 40000, evaluated_ms = 40000, boosted_ms = 20000")
+            self.assertEqual(score_snapshot(self.database, "r", self.captions)[0]["points"], 2000)
+            final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
+            self.assertEqual(final["points"], 1000)
+
+    def test_energy_migration_preserves_existing_vocal_scores(self):
+        self.calibrate()
+        self.sample(31000)
+        self.database.execute("ALTER TABLE vocal_scores DROP COLUMN boosted_ms")
+        self.database.commit()
+        initialize()
+        initialize()
+        restored = score_snapshot(self.database, "r", self.captions)[0]
+        self.assertEqual(restored["boosted_ms"], 0)
+        self.assertEqual(restored["points"], 25)
 
     def test_short_and_long_songs_have_same_normalized_opportunity(self):
         for duration in (60000, 180000, 360000):
@@ -261,3 +333,7 @@ class VocalTests(unittest.TestCase):
         with patch.dict("os.environ", {"KARAOKE_VOCAL_CALIBRATION_MS": "0", "KARAOKE_VOCAL_EVALUATION_MS": "999999"}):
             self.assertEqual(vocal_calibration_ms(), 1000)
             self.assertEqual(vocal_evaluation_ms(), 120000)
+        with patch.dict("os.environ", {"KARAOKE_VOCAL_BOOST_FILL_MS": "0"}):
+            self.assertEqual(vocal_boost_fill_ms(), 1000)
+        with patch.dict("os.environ", {"KARAOKE_VOCAL_BOOST_FILL_MS": "999999"}):
+            self.assertEqual(vocal_boost_fill_ms(), 720000)

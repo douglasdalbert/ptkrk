@@ -191,6 +191,7 @@ def initialize() -> None:
                 good_streak INTEGER NOT NULL DEFAULT 0,
                 bad_streak INTEGER NOT NULL DEFAULT 0,
                 last_position_ms INTEGER NOT NULL DEFAULT 0,
+                boosted_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (request_id, singer_id)
             );
             CREATE TABLE IF NOT EXISTS score_history (
@@ -273,6 +274,8 @@ def initialize() -> None:
             database.execute("ALTER TABLE song_scores ADD COLUMN boosted_blocks TEXT NOT NULL DEFAULT '[]'")
         if "scoring_mode" not in {row[1] for row in database.execute("PRAGMA table_info(score_history)")}:
             database.execute("ALTER TABLE score_history ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'captions'")
+        if "boosted_ms" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_scores)")}:
+            database.execute("ALTER TABLE vocal_scores ADD COLUMN boosted_ms INTEGER NOT NULL DEFAULT 0")
         if "evaluated_ms" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_scores)")}:
             database.execute("ALTER TABLE vocal_scores ADD COLUMN hit_ms INTEGER NOT NULL DEFAULT 0")
             database.execute("ALTER TABLE vocal_scores ADD COLUMN evaluated_ms INTEGER NOT NULL DEFAULT 0")

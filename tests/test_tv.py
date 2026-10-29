@@ -3,6 +3,7 @@ import time
 import json
 import unittest
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 from fastapi import WebSocketDisconnect
@@ -13,7 +14,7 @@ import app.main as main_module
 from app.main import app
 from app.queue import enqueue_request
 from app.scoring import record_block_result, record_offcue_penalty, record_onset
-from app.storage import connection, save_playback_sync
+from app.storage import connection, initialize, save_playback_sync
 from app.vocal import record_vocal_sample
 from app.worker import process_next
 
@@ -117,6 +118,132 @@ class TvTests(unittest.TestCase):
             response = self.client.get("/api/tv/song/captions").json()
             self.assertEqual(len(response["bars"]), 0 if mode == "vocal" else 1)
             self.assertEqual(response["bar_count"], len(response["bars"]))
+
+    def send_boost_state(self, websocket, active, ready=False):
+        processed = Event()
+        with patch("app.main.save_playback_sync", side_effect=lambda sync: processed.set()):
+            websocket.send_json({"type": "boost_state", "request_id": "song", "active": active, "ready": ready})
+            websocket.send_json({"type": "playback_sync", "request_id": "song", "position_ms": 0, "playing": False})
+            self.assertTrue(processed.wait(5), "O servidor não processou as mensagens")
+        return main_module.party_snapshot()
+
+    def test_vocal_special_requires_forty_seconds_and_cannot_recharge_after_reconnection(self):
+        self.add_ready()
+        with connection() as database:
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+            database.execute(
+                "INSERT INTO vocal_scores(request_id,singer_id,calibration_ms,evaluated_ms) "
+                "VALUES ('song','singer',5000,34999)"
+            )
+        with patch.dict("os.environ", {"KARAOKE_VOCAL_BOOST_FILL_MS": "40000"}):
+            with self.client.websocket_connect("/ws/requests", headers={
+                "Origin": "http://localhost:8001", "Host": "localhost:8001"
+            }) as websocket:
+                websocket.send_json({"token": ""})
+                state = websocket.receive_json()
+                self.assertEqual(state["vocal_boost_fill_ms"], 40000)
+                self.assertFalse(state["boost_ready"])
+                self.assertFalse(self.send_boost_state(websocket, True)["boost_active"])
+                with connection() as database:
+                    database.execute("UPDATE vocal_scores SET evaluated_ms = 35000")
+                self.assertTrue(main_module.party_snapshot()["boost_ready"])
+                active = self.send_boost_state(websocket, True)
+                self.assertTrue(active["boost_active"])
+                self.assertTrue(active["boost_used"])
+                self.assertFalse(active["boost_ready"])
+                ended = self.send_boost_state(websocket, False)
+                self.assertTrue(ended["boost_used"])
+                self.assertFalse(ended["boost_active"])
+                self.assertFalse(ended["boost_ready"])
+            initialize()
+            with self.client.websocket_connect("/ws/requests", headers={
+                "Origin": "http://localhost:8001", "Host": "localhost:8001"
+            }) as websocket:
+                websocket.send_json({"token": ""})
+                self.assertTrue(websocket.receive_json()["boost_used"])
+                self.assertFalse(self.send_boost_state(websocket, True, True)["boost_active"])
+                self.assertTrue(main_module.party_snapshot()["boost_used"])
+
+    def test_spectator_donation_activates_karaoke_special_and_voice_hits_receive_bonus(self):
+        lead = self.client.post("/api/singers", json={"name": "Cantor"}).json()
+        donor = self.client.post("/api/singers", json={"name": "Doador"}).json()
+        with connection() as database:
+            database.execute(
+                "INSERT INTO requests(id,singer_id,video_id,status,force_karaoke) "
+                "VALUES ('song',?,'glvVYIhdWlU','ready',1)", (lead["singer_id"],),
+            )
+            enqueue_request(database, "song")
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+            database.execute(
+                "INSERT INTO vocal_scores(request_id,singer_id,calibration_ms,evaluated_ms,hit_ms,"
+                "loudness_sum,jitter_sum,point_rate,last_position_ms) VALUES ('song',?,5000,35000,35000,"
+                "1000,50000,0,40000)", (lead["singer_id"],),
+            )
+        with patch.dict("os.environ", {"KARAOKE_BOOST_MULTIPLIER": "2", "KARAOKE_VOCAL_BOOST_FILL_MS": "40000"}):
+            with self.client.websocket_connect("/ws/requests", headers={
+                "Origin": "http://localhost:8001", "Host": "localhost:8001"
+            }) as tv:
+                tv.send_json({"token": ""})
+                self.assertTrue(tv.receive_json()["boost_ready"])
+                with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
+                    with self.client.websocket_connect("/ws/requests") as spectator:
+                        spectator.send_json({"token": donor["token"]})
+                        spectator.receive_json()
+                        spectator.send_json({"type": "boost_request", "request_id": "song", "event_id": "donation"})
+                        for _ in range(10):
+                            notification = tv.receive_json()
+                            if notification["type"] == "boost_request":
+                                break
+                        else:
+                            self.fail("A doação não chegou à TV")
+                        self.assertEqual(notification["singer_id"], donor["singer_id"])
+                        self.assertTrue(self.send_boost_state(tv, True)["boost_active"])
+                    save_playback_sync({
+                        "request_id": "song", "position_ms": 41000, "duration_ms": 180000,
+                        "playing": True, "server_time": time.time(), "server_time_ms": round(time.time() * 1000),
+                    })
+                    with self.client.websocket_connect("/ws/requests") as singer:
+                        singer.send_json({"token": lead["token"]})
+                        singer.receive_json()
+                        singer.send_json({
+                            "type": "vocal_sample", "request_id": "song", "event_id": "boosted-voice",
+                            "position_ms": 41000, "voiced_ms": 1000, "loudness": 0.2, "jitter": 10,
+                        })
+                        for _ in range(10):
+                            score = singer.receive_json()
+                            if score["type"] == "score_update":
+                                break
+                        else:
+                            self.fail("A amostra não recebeu pontuação")
+                        self.assertTrue(score["boosted"])
+                        self.assertEqual(score["points"], 925)
+                        self.assertEqual(score["boosted_ms"], 1000)
+
+    def test_playback_special_can_be_used_repeatedly(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+        captions = Path(self.directory.name) / generation / "captions" / "glvVYIhdWlU.json"
+        captions.parent.mkdir(parents=True)
+        captions.write_text('{"bars":[{"text":"Verso","start_ms":0,"end_ms":1000}]}', encoding="utf-8")
+        with self.client.websocket_connect("/ws/requests", headers={
+            "Origin": "http://localhost:8001", "Host": "localhost:8001"
+        }) as websocket:
+            websocket.send_json({"token": ""})
+            self.assertEqual(websocket.receive_json()["scoring_mode"], "captions")
+            for _ in range(2):
+                active = self.send_boost_state(websocket, True)
+                self.assertTrue(active["boost_active"])
+                self.assertFalse(active["boost_used"])
+                self.assertFalse(self.send_boost_state(websocket, False)["boost_active"])
+                self.assertTrue(self.send_boost_state(websocket, False, True)["boost_ready"])
 
     def test_forced_karaoke_ignores_cached_captions_and_finishes_with_vocal_score(self):
         self.add_ready()
