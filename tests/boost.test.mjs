@@ -161,19 +161,44 @@ test("live score numbers preserve points above the maximum, including after a la
       location: { protocol: "http:", host: "localhost" },
       setConnectionStatus() {}, renderCaptionBar() {}, updateVocalFeedback() {},
       currentScoreValue: element(), hitBlocks: new Set(), blockResults: new Map(),
-      rankingMax: 1000, activeScorePoints: 0,
+      rankingMax: 1000, activeScorePoints: 0, playbackHasScored: false,
     });
     runInNewContext(tvSource.slice(tvSource.indexOf("function connect("), tvSource.indexOf("async function setup(")), tv);
     tv.connect();
-    for (const [result, points] of [["hit", 1250], ["miss", 1125]]) {
+    for (const [result, points] of [["hit", 1250], ["miss", 1125], ["miss", 0]]) {
       tv.socket.onmessage({ data: JSON.stringify({
         type: "score_update", request_id: "song", singer_id: "singer",
         mode, result, points, singing_ms: 50000,
       }) });
       assert.equal(tv.activeScorePoints, points);
       assert.equal(tv.currentScoreValue.textContent, String(points));
+      assert.equal(tv.playbackHasScored, true);
     }
   }
+});
+
+test("playback does not send or display off-cue penalties before its first earned points", () => {
+  const tv = tvContext("captions");
+  Object.assign(tv, {
+    playbackHasScored: false,
+    microphoneStateEvents: [{ singer_id: "singer", state_since_ms: 0, speaking: true }],
+    captionBars: [{ start_ms: 1000 }],
+    scoreToleranceMs: 100, scoreBlockMs: 1000, offCueRearmMs: 500,
+    lastOffcuePenaltyAt: null, sentOffcuePenalties: new Set(),
+    crypto: { randomUUID: () => "penalty" },
+    displayedPenalties: 0,
+    showOffcuePenalty() { tv.displayedPenalties += 1; },
+  });
+  runInNewContext(tvSource.slice(tvSource.indexOf("function evaluateOffCueSpeech("),
+    tvSource.indexOf("function animateCaptionBars(")), tv);
+  tv.evaluateOffCueSpeech(3000);
+  assert.equal(tv.messages.length, 0);
+  assert.equal(tv.displayedPenalties, 0);
+  assert.equal(tv.lastOffcuePenaltyAt, null);
+  tv.playbackHasScored = true;
+  tv.evaluateOffCueSpeech(3100);
+  assert.equal(tv.messages.at(-1).type, "offcue_penalty");
+  assert.equal(tv.displayedPenalties, 1);
 });
 
 function singerContext() {

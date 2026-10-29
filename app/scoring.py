@@ -159,6 +159,14 @@ def _points_for_units(units: float, total_blocks: int, boosted_hits: int = 0) ->
     return round((max(0, min(total_blocks, units)) + bonus) * max_score() / total_blocks, 1)
 
 
+def _has_playback_scored(database: sqlite3.Connection, request_id: str, singer_id: str) -> bool:
+    score = database.execute(
+        "SELECT hit_blocks, score_units FROM song_scores WHERE request_id = ? AND singer_id = ?",
+        (request_id, singer_id),
+    ).fetchone()
+    return score is not None and (bool(json.loads(score["hit_blocks"])) or (score["score_units"] or 0) > 0)
+
+
 def record_onset(
     database: sqlite3.Connection,
     request_id: str,
@@ -179,6 +187,8 @@ def record_onset(
         return None
 
     block_index = matching_block(bars, position_ms)
+    if block_index is None and not _has_playback_scored(database, request_id, singer_id):
+        return None
     offcue_window = position_ms // off_cue_rearm_ms() if block_index is None else None
     event_type = "hit" if block_index is not None else "off_cue"
     inserted = database.execute(
@@ -336,6 +346,8 @@ def record_offcue_penalty(
         return None
     total_blocks = len(usable_caption_bars(captions))
     if total_blocks == 0 or not 0 <= position_ms <= captions.get("duration_ms", 0):
+        return None
+    if not _has_playback_scored(database, request_id, singer_id):
         return None
 
     previous_penalty = database.execute(

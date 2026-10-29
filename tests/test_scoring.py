@@ -173,10 +173,20 @@ This is a phrase
                          "score_window_start_ms": 4900, "score_window_end_ms": 5100},
                     ]}), encoding="utf-8")
 
-                    record_offcue_penalty(database, "song", "singer", "off-1", 3000, sidecar)
-                    record_offcue_penalty(database, "song", "singer", "off-2", 4000, sidecar)
+                    for record in (record_offcue_penalty, record_onset):
+                        self.assertIsNone(record(database, "song", "singer", "off-1", 3000, sidecar))
+                        self.assertIsNone(record(database, "song", "singer", "off-2", 4000, sidecar))
+                    missed = record_block_result(database, "song", "singer", "miss-1", 0, False, sidecar)
+                    self.assertEqual(missed["points"], 0)
+                    self.assertIsNone(record_offcue_penalty(
+                        database, "song", "singer", "off-after-miss", 4500, sidecar
+                    ))
+                    self.assertEqual(database.execute(
+                        "SELECT COUNT(*) FROM score_events WHERE event_type LIKE 'off_cue%'"
+                    ).fetchone()[0], 0)
                     first_hit = record_onset(database, "song", "singer", "hit-1", 1000, sidecar)
                     self.assertEqual(first_hit["points"], 500.0)
+                    self.assertEqual(first_hit["penalties"], 0)
 
                     after_hit_penalty = record_offcue_penalty(
                         database, "song", "singer", "off-3", 7000, sidecar
@@ -184,6 +194,11 @@ This is a phrase
                     self.assertEqual(after_hit_penalty["points"], 499.0)
                     second_hit = record_onset(database, "song", "singer", "hit-2", 5000, sidecar)
                     self.assertEqual(second_hit["points"], 999.0)
+                    database.execute("UPDATE song_scores SET score_units = 0 WHERE request_id = 'song'")
+                    at_zero = record_offcue_penalty(database, "song", "singer", "off-at-zero", 8000, sidecar)
+                    self.assertEqual((at_zero["points"], at_zero["penalties"]), (0, 2))
+                    at_zero_onset = record_onset(database, "song", "singer", "onset-at-zero", 9000, sidecar)
+                    self.assertEqual((at_zero_onset["points"], at_zero_onset["penalties"]), (0, 3))
                     self.assertGreaterEqual(
                         database.execute(
                             "SELECT score_units FROM song_scores WHERE request_id = 'song'"

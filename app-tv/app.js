@@ -56,6 +56,7 @@ let noiseHoldTimer = null;
 let noiseHeldKey = null;
 let lastOffcuePenaltyAt = null;
 let hitBlocks = new Set();
+let playbackHasScored = false;
 let blockResults = new Map();
 let sentBlockResults = new Set();
 let sentOffcuePenalties = new Set();
@@ -273,6 +274,7 @@ function stopPlayback() {
   activeTrackItem = null;
   captionLoadToken += 1;
   activeScorePoints = 0;
+  playbackHasScored = false;
   vocalScore = null;
   updateVocalFeedback();
   currentScoreValue.textContent = "0";
@@ -306,6 +308,7 @@ async function startPlayback(item) {
   closeScorePanel();
   activeTrackItem = item;
   activeScorePoints = 0;
+  playbackHasScored = false;
   vocalScore = null;
   currentScoreValue.textContent = "0";
   resetBoost();
@@ -508,7 +511,7 @@ function showOffcuePenalty(positionMs) {
 }
 
 function evaluateOffCueSpeech(currentPositionMs) {
-  if (!activeSingerId || !captionBars.length || socket?.readyState !== WebSocket.OPEN) return;
+  if (!playbackHasScored || !activeSingerId || !captionBars.length || socket?.readyState !== WebSocket.OPEN) return;
   const timeline = microphoneStateEvents
     .filter(activity => activity.singer_id === activeSingerId && Number.isInteger(activity.state_since_ms))
     .sort((left, right) => left.state_since_ms - right.state_since_ms);
@@ -614,6 +617,7 @@ function render(snapshot) {
   vocalScore = leadScore?.mode === "vocal" ? leadScore : null;
   updateVocalFeedback();
   if (leadScore) {
+    if (leadScore.hits > 0 || leadScore.points > 0) playbackHasScored = true;
     activeScorePoints = leadScore.points;
     currentScoreValue.textContent = String(Math.round(activeScorePoints));
   } else if (!scoreShow) {
@@ -691,6 +695,7 @@ function connect() {
       }
       renderCaptionBar();
       if (message.singer_id === activeSingerId) {
+        if (message.hits > 0 || message.points > 0) playbackHasScored = true;
         activeScorePoints = message.points;
         currentScoreValue.textContent = String(Math.round(activeScorePoints));
         if (message.mode === "vocal") {
