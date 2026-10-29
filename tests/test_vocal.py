@@ -121,6 +121,30 @@ class VocalTests(unittest.TestCase):
             final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
             self.assertEqual(final["points"], 1000)
 
+    def test_group_vocal_score_combines_alternating_singers_as_one(self):
+        self.database.execute("INSERT INTO singers(id, name, session_hash) VALUES ('b', 'Bia', 'hash-b')")
+        self.database.execute(
+            "INSERT INTO backvocals(request_id, singer_id, accepted, joined, score_eligible) VALUES ('r', 'b', 1, 1, 1)"
+        )
+        for singer, start in (("s", 11000), ("b", 51000)):
+            for position in range(start, start + 40000, 1000):
+                score = record_vocal_sample(
+                    self.database, "r", singer, f"{singer}-{position}", position, 180000,
+                    1000, 0.2, 10, self.captions,
+                )
+            self.assertEqual(score["points"], 500)
+        self.assertEqual(score["group"]["points"], 1000)
+        self.assertEqual(score["group"]["singing_ms"], 80000)
+        self.assertEqual([item["points"] for item in score_snapshot(self.database, "r", self.captions)], [500, 500])
+        with patch.dict("os.environ", {"KARAOKE_VOCAL_BOOST_FILL_MS": "100000"}):
+            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.8)
+        final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
+        self.assertEqual(final["points"], 1000)
+        self.assertEqual(
+            [row[0] for row in self.database.execute("SELECT points FROM score_history WHERE request_id = 'r'")],
+            [1000, 1000],
+        )
+
     def test_energy_migration_preserves_existing_vocal_scores(self):
         self.calibrate()
         self.sample(31000)

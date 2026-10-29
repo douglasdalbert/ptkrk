@@ -74,10 +74,12 @@ const scoreStar = document.querySelector("#score-star");
 const scoreValue = document.querySelector("#score-value");
 const scoreStreamers = document.querySelector("#score-streamers");
 const currentScoreValue = document.querySelector("#current-score-value");
-const vocalFeedback = document.querySelector("#vocal-feedback");
+const vocalFeedbackList = document.querySelector("#vocal-feedbacks");
+const vocalFeedbackTemplate = document.querySelector("#vocal-feedback-template");
 const testPugButton = document.querySelector("#test-pug-action");
 let scoringMode = null;
-let vocalScore = null;
+let vocalParticipants = [];
+let vocalScores = new Map();
 let vocalCalibrationMs = 5000;
 let development = false;
 let pugPreview = -1;
@@ -94,15 +96,36 @@ let scoreShow = null;
 let audioContext = null;
 let noise = null;
 
+function vocalFeedbackElement(singerId, name) {
+  let element = [...vocalFeedbackList.children].find(child => child.dataset.singer === singerId);
+  if (!element) {
+    element = vocalFeedbackTemplate.content.firstElementChild.cloneNode(true);
+    element.dataset.singer = singerId;
+  }
+  const label = element.querySelector(".vocal-singer");
+  if (label.textContent !== name) label.textContent = name;
+  return element;
+}
+
 function updateVocalFeedback() {
   const previewing = development && pugPreview >= 0;
-  vocalFeedback.hidden = !previewing && (!activeId || scoringMode !== "vocal");
-  if (vocalFeedback.hidden) return;
-  const score = previewing ? {
+  const pugs = previewing ? [{ singer_id: "", singer_name: "Prévia", score: {
     level: pugPreview - 1, points: pugPreview * rankingMax / 4,
     percent: pugPreview * 25, ranking_max: rankingMax,
-  } : vocalScore;
-  renderVocalFeedback(vocalFeedback, score, vocalCalibrationMs, development);
+  } }] : activeId && scoringMode === "vocal" ? vocalParticipants.map(participant => ({
+    ...participant, score: vocalScores.get(participant.singer_id) || null,
+  })) : [];
+  const elements = pugs.map(pug => {
+    const element = vocalFeedbackElement(pug.singer_id, pug.singer_name);
+    renderVocalFeedback(element, pug.score, vocalCalibrationMs, development);
+    return element;
+  });
+  if (elements.length !== vocalFeedbackList.children.length
+      || elements.some((element, index) => vocalFeedbackList.children[index] !== element)) {
+    vocalFeedbackList.replaceChildren(...elements);
+  }
+  vocalFeedbackList.classList.toggle("compact", elements.length > 2);
+  vocalFeedbackList.hidden = elements.length === 0;
 }
 
 testPugButton.addEventListener("click", () => {
@@ -275,7 +298,8 @@ function stopPlayback() {
   captionLoadToken += 1;
   activeScorePoints = 0;
   playbackHasScored = false;
-  vocalScore = null;
+  vocalParticipants = [];
+  vocalScores = new Map();
   updateVocalFeedback();
   currentScoreValue.textContent = "0";
   resetBoost();
@@ -309,7 +333,7 @@ async function startPlayback(item) {
   activeTrackItem = item;
   activeScorePoints = 0;
   playbackHasScored = false;
-  vocalScore = null;
+  vocalScores = new Map();
   currentScoreValue.textContent = "0";
   resetBoost();
   captionBars = [];
@@ -554,18 +578,24 @@ function animateVocalMarker() {
 function renderMicrophoneWarning(snapshot) {
   const warning = document.querySelector("#microphone-warning");
   const names = document.querySelector("#microphone-warning-names");
-  const invitation = snapshot.invitation;
-  const item = snapshot.items.find(item => item.id === invitation?.request_id);
-  const participants = [];
-  if (item && invitation.accepted && !snapshot.skip && !scoreShow) {
-    if (invitation.lead_accepted) participants.push({ singer_id: item.singer_id, singer_name: item.singer_name });
-    participants.push(...item.backvocals.filter(vocal => vocal.joined === 1 && vocal.accepted && vocal.score_eligible));
-  }
+  const participants = scoreShow ? [] : singingParticipants(snapshot);
   const ready = new Set(snapshot.microphone_ready_singers || []);
   const missing = participants.filter(participant => !ready.has(participant.singer_id));
   const text = missing.map(participant => participant.singer_name).join(" + ");
   if (names.textContent !== text) names.textContent = text;
   warning.hidden = missing.length === 0;
+}
+
+function singingParticipants(snapshot) {
+  const invitation = snapshot.invitation;
+  const item = snapshot.items.find(item => item.id === invitation?.request_id);
+  if (!item || !invitation.accepted || snapshot.skip) return [];
+  return [
+    ...(invitation.lead_accepted ? [{ singer_id: item.singer_id, singer_name: item.singer_name }] : []),
+    ...item.backvocals
+      .filter(vocal => vocal.joined === 1 && vocal.accepted && vocal.score_eligible)
+      .map(vocal => ({ singer_id: vocal.singer_id, singer_name: vocal.singer_name })),
+  ];
 }
 
 function render(snapshot) {
@@ -619,8 +649,10 @@ function render(snapshot) {
     stopPlayback();
   }
   renderMicrophoneWarning(snapshot);
-  const leadScore = activeId && snapshot.scores?.find(score => score.singer_id === activeSingerId);
-  if (scoringMode === "vocal" && activeId) {
+  const vocalMode = scoringMode === "vocal";
+  const leadScore = activeId && (vocalMode ? snapshot.group_score :
+    snapshot.scores?.find(score => score.singer_id === activeSingerId));
+  if (vocalMode && activeId) {
     boostUsed = boostUsed || !!snapshot.boost_used;
     if (boostUsed && snapshot.boost_active && boostRemainingMs <= 0) sendBoostState();
     updateVocalBoost(leadScore);
@@ -632,7 +664,9 @@ function render(snapshot) {
     renderCaptionOptions(snapshot.caption_tracks || [], snapshot.caption_track_id);
     renderCaptionBar();
   }
-  vocalScore = leadScore?.mode === "vocal" ? leadScore : null;
+  vocalParticipants = activeId && vocalMode ? singingParticipants(snapshot) : [];
+  vocalScores = new Map(activeId && vocalMode ?
+    (snapshot.scores || []).filter(score => score.mode === "vocal").map(score => [score.singer_id, score]) : []);
   updateVocalFeedback();
   if (leadScore) {
     if (leadScore.hits > 0 || leadScore.points > 0) playbackHasScored = true;
@@ -712,16 +746,19 @@ function connect() {
         blockResults.set(message.block_index, message.result === "hit");
       }
       renderCaptionBar();
-      if (message.singer_id === activeSingerId) {
+      if (message.mode === "vocal") {
+        const group = message.group || message;
+        if (group.hits > 0 || group.points > 0) playbackHasScored = true;
+        activeScorePoints = group.points;
+        currentScoreValue.textContent = String(Math.round(activeScorePoints));
+        vocalScores.set(message.singer_id, message);
+        updateVocalBoost(group);
+        if (message.boosted) spawnBoostStar();
+        updateVocalFeedback();
+      } else if (message.singer_id === activeSingerId) {
         if (message.hits > 0 || message.points > 0) playbackHasScored = true;
         activeScorePoints = message.points;
         currentScoreValue.textContent = String(Math.round(activeScorePoints));
-        if (message.mode === "vocal") {
-          vocalScore = message;
-          updateVocalBoost(message);
-          if (message.boosted) spawnBoostStar();
-          updateVocalFeedback();
-        }
       }
       return;
     }

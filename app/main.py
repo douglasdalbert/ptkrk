@@ -50,7 +50,7 @@ from app.scoring import (
 from app.separation import cancel_for_playback
 from app.vocal import (
     has_timed_captions, record_vocal_sample, vocal_boost_charge, vocal_boost_fill_ms,
-    vocal_calibration_ms, vocal_evaluation_ms,
+    vocal_calibration_ms, vocal_evaluation_ms, vocal_group_score,
 )
 from app.media import MEDIA_ROOT, remove_unused_media
 from app.queue import enqueue_request
@@ -221,6 +221,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         )]
         scoreboards = {singer["id"]: scoreboard_snapshot(database, singer["id"]) for singer in singers}
         scores = []
+        group_score = None
         scoring_mode = None
         caption_tracks = []
         active_caption_track_id = None
@@ -250,6 +251,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 active_bars = []
             scores = score_snapshot(database, invitation["request_id"], captions)
             if scoring_mode == "vocal":
+                group_score = vocal_group_score(database, invitation["request_id"])
                 boost_ready = not boost_used and not boost_active and vocal_boost_charge(
                     database, invitation["request_id"]
                 ) >= 1
@@ -258,7 +260,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
     snapshot = {"type": "requests", "items": request_snapshot(), "invitation": invitation,
                 "skip": skipping, "allow_skip": skip_enabled(), "party": generation, "singers": singers,
                 "caption_tracks": caption_tracks, "caption_track_id": active_caption_track_id,
-                "scores": scores, "scoreboards": scoreboards, "ranking_max": max_score(),
+                "scores": scores, "group_score": group_score, "scoreboards": scoreboards, "ranking_max": max_score(),
                 "scoring_mode": scoring_mode,
                 "microphone_ready_singers": microphone_ready_singers,
                 "vocal_calibration_ms": vocal_calibration_ms(),

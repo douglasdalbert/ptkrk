@@ -19,12 +19,34 @@ def vocal_boost_fill_ms() -> int:
 
 
 def vocal_boost_charge(database: sqlite3.Connection, request_id: str) -> float:
+    group = vocal_group_score(database, request_id)
+    return min(1.0, group["singing_ms"] / vocal_boost_fill_ms()) if group else 0.0
+
+
+def vocal_group_score(database: sqlite3.Connection, request_id: str) -> dict | None:
+    # Groups alternate stanzas, so everyone's voiced time is judged as a single combined singer.
     row = database.execute(
-        "SELECT calibration_ms + evaluated_ms AS singing_ms FROM vocal_scores "
-        "JOIN requests ON requests.id = vocal_scores.request_id "
-        "AND requests.singer_id = vocal_scores.singer_id WHERE requests.id = ?", (request_id,),
+        "SELECT COUNT(*) AS singers, SUM(hit_ms) AS hit_ms, SUM(evaluated_ms) AS evaluated_ms, "
+        "SUM(boosted_ms) AS boosted_ms, SUM(calibration_ms) AS calibration_ms, "
+        "SUM(hits) AS hits, SUM(penalties) AS penalties FROM vocal_scores WHERE request_id = ?",
+        (request_id,),
     ).fetchone()
-    return min(1.0, row["singing_ms"] / vocal_boost_fill_ms()) if row else 0.0
+    if not row["singers"]:
+        return None
+    points = vocal_points(row["hit_ms"], row["evaluated_ms"], row["boosted_ms"])
+    return {
+        "request_id": request_id,
+        "mode": "vocal",
+        "singers": row["singers"],
+        "points": round(points, 1),
+        "percent": round(points * 100 / max_score(), 1),
+        "ranking_max": max_score(),
+        "hits": row["hits"],
+        "penalties": row["penalties"],
+        "evaluated_ms": row["evaluated_ms"],
+        "singing_ms": row["calibration_ms"] + row["evaluated_ms"],
+        "boosted_ms": row["boosted_ms"],
+    }
 
 
 def vocal_points(hit_ms: int, evaluated_ms: int, boosted_ms: int = 0) -> float:
@@ -143,4 +165,5 @@ def record_vocal_sample(
          position_ms, hit_ms, evaluated_ms, boosted_ms, request_id, singer_id),
     )
     score = next(score for score in vocal_snapshot(database, request_id) if score["singer_id"] == singer_id)
-    return {**score, "type": "score_update", "result": result, "feedback": feedback, "boosted": boosted}
+    return {**score, "type": "score_update", "result": result, "feedback": feedback, "boosted": boosted,
+            "group": vocal_group_score(database, request_id)}

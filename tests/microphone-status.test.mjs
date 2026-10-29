@@ -245,3 +245,76 @@ test("permission granted after song changes cannot activate the next song", asyn
   assert.equal(singer.microphoneContext, null);
   assert.equal(singer.messages.length, 0);
 });
+
+function pugElement() {
+  const parts = {
+    ".vocal-singer": { textContent: "" }, ".vocal-label": { textContent: "" },
+    ".vocal-message": { textContent: "", dataset: {} }, ".vocal-points": { textContent: "", hidden: true },
+    progress: { value: 0, hidden: false, setAttribute() {} }, use: { setAttribute() {} },
+  };
+  return { dataset: {}, cloneNode() { return pugElement(); }, querySelector: selector => parts[selector] };
+}
+
+function pugContext() {
+  const list = {
+    hidden: true, children: [], classes: new Set(),
+    classList: { toggle(name, on) { on ? list.classes.add(name) : list.classes.delete(name); } },
+    replaceChildren(...children) { list.children = children; },
+  };
+  const context = {
+    development: false, pugPreview: -1, activeId: "song", scoringMode: "vocal", rankingMax: 1000,
+    vocalCalibrationMs: 5000, vocalParticipants: [], vocalScores: new Map(), list, rendered: [],
+    vocalFeedbackList: list,
+    vocalFeedbackTemplate: { content: { firstElementChild: pugElement() } },
+    renderVocalFeedback(element, score) { context.rendered.push([element.dataset.singer, score]); },
+  };
+  runInNewContext(tvSource.slice(tvSource.indexOf("function vocalFeedbackElement("),
+    tvSource.indexOf("testPugButton.addEventListener")), context);
+  runInNewContext(tvSource.slice(tvSource.indexOf("function singingParticipants("),
+    tvSource.indexOf("function render(snapshot)")), context);
+  return context;
+}
+
+test("TV shows one named pug per scoring singer with that singer's own feedback", () => {
+  const tv = pugContext();
+  tv.vocalParticipants = tv.singingParticipants(snapshot());
+  tv.vocalScores = new Map([["bia", { singer_id: "bia", level: 2 }]]);
+  tv.updateVocalFeedback();
+  assert.equal(tv.list.hidden, false);
+  assert.deepEqual(tv.list.children.map(pug => pug.querySelector(".vocal-singer").textContent), ["Ana", "Bia", "Caio"]);
+  assert.deepEqual(tv.rendered.map(([singer, score]) => [singer, score?.level ?? null]),
+    [["ana", null], ["bia", 2], ["caio", null]]);
+  assert.equal(tv.list.classes.has("compact"), true);
+  const [ana] = tv.list.children;
+  tv.vocalParticipants = tv.vocalParticipants.slice(0, 2);
+  tv.updateVocalFeedback();
+  assert.equal(tv.list.children[0], ana);
+  assert.equal(tv.list.children.length, 2);
+  assert.equal(tv.list.classes.has("compact"), false);
+  tv.activeId = null;
+  tv.updateVocalFeedback();
+  assert.equal(tv.list.hidden, true);
+  assert.equal(tv.list.children.length, 0);
+});
+
+test("TV live score and energy follow the combined group score from any singer", () => {
+  const boosts = [];
+  const tv = {
+    WebSocket: class { constructor() { this.readyState = 1; } send() {} },
+    location: { protocol: "http:", host: "localhost" }, activeId: "song", activeSingerId: "ana",
+    setConnectionStatus() {}, renderCaptionBar() {}, updateVocalFeedback() {}, spawnBoostStar() {},
+    updateVocalBoost(score) { boosts.push(score.singing_ms); },
+    currentScoreValue: { textContent: "0" }, hitBlocks: new Set(), blockResults: new Map(), vocalScores: new Map(),
+    activeScorePoints: 0, playbackHasScored: false,
+  };
+  runInNewContext(tvSource.slice(tvSource.indexOf("function connect("), tvSource.indexOf("async function setup(")), tv);
+  tv.connect();
+  tv.socket.onmessage({ data: JSON.stringify({
+    type: "score_update", request_id: "song", singer_id: "bia", mode: "vocal", result: "hit",
+    points: 300, singing_ms: 9000, group: { points: 450, hits: 9, singing_ms: 21000 },
+  }) });
+  assert.equal(tv.activeScorePoints, 450);
+  assert.equal(tv.currentScoreValue.textContent, "450");
+  assert.equal(tv.vocalScores.get("bia").points, 300);
+  assert.deepEqual(boosts, [21000]);
+});

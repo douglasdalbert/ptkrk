@@ -18,4 +18,13 @@
 .vocal-feedback[data-state="excellent"] { --vocal-color:#c9fa45; }
 .vocal-feedback[data-state="waiting"] { --vocal-color:#aab8c5; }
 #singing-overlay .vocal-feedback { width:min(100%,360px); margin:12px auto; text-align:left; }
-#show .vocal-feedback { position:absolute; z-index:7; top:16px; left:16px; width:310px; max-width:calc(100% - 64px); pointer-events:none; }
+#show .vocal-feedbacks { position:absolute; z-index:7; top:16px; left:16px; display:flex; flex-flow:column wrap; align-content:flex-start; gap:10px; max-width:calc(100% - 64px); max-height:calc(100% - 120px); pointer-events:none; }
+#show .vocal-feedbacks[hidden] { display:none; }
+#show .vocal-feedback { width:310px; max-width:100%; }
+#show .vocal-pug { grid-row:1 / 5; display:grid; justify-items:center; gap:2px; min-width:0; }
+#show .vocal-pug svg { grid-row:auto; }
+#show .vocal-singer { max-width:100%; font-size:16px; line-height:1.2; text-align:center; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; color:#fff; }
+#show .vocal-feedbacks.compact .vocal-feedback { width:260px; padding:8px; grid-template-columns:72px minmax(0,1fr); }
+#show .vocal-feedbacks.compact svg { width:72px; height:66px; }
+#show .vocal-feedbacks.compact .vocal-label { font-size:17px; }
+#show .vocal-feedbacks.compact .vocal-message { font-size:15px; }

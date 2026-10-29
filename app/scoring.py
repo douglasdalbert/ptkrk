@@ -447,8 +447,12 @@ def finalize_performance(
     ).fetchone()
     if item is None:
         return None
+    from app.vocal import vocal_group_score
+
     scores = score_snapshot(database, request_id, caption_path)
     lead_score = next((score for score in scores if score["singer_id"] == item["singer_id"]), None)
+    if any(score.get("mode") == "vocal" for score in scores):
+        lead_score = vocal_group_score(database, request_id)
     try:
         preview = preview_path.read_bytes() if preview_path.is_file() else None
     except OSError:

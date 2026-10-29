@@ -136,7 +136,7 @@ test("each boosted vocal hit shows a multiplier star; ordinary hits do not", () 
     },
     location: { protocol: "http:", host: "localhost" },
     setConnectionStatus() {}, renderCaptionBar() {}, updateVocalFeedback() {},
-    currentScoreValue: element(), hitBlocks: new Set(), blockResults: new Map(),
+    currentScoreValue: element(), hitBlocks: new Set(), blockResults: new Map(), vocalScores: new Map(),
   });
   runInNewContext(tvSource.slice(tvSource.indexOf("function connect("), tvSource.indexOf("async function setup(")), tv);
   tv.connect();
@@ -160,7 +160,7 @@ test("live score numbers preserve points above the maximum, including after a la
       },
       location: { protocol: "http:", host: "localhost" },
       setConnectionStatus() {}, renderCaptionBar() {}, updateVocalFeedback() {},
-      currentScoreValue: element(), hitBlocks: new Set(), blockResults: new Map(),
+      currentScoreValue: element(), hitBlocks: new Set(), blockResults: new Map(), vocalScores: new Map(),
       rankingMax: 1000, activeScorePoints: 0, playbackHasScored: false,
     });
     runInNewContext(tvSource.slice(tvSource.indexOf("function connect("), tvSource.indexOf("async function setup(")), tv);
