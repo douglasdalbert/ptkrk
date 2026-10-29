@@ -922,6 +922,7 @@ def tv_select_caption_track(request_id: str, selection: CaptionTrackSelection) -
         )
         database.execute("DELETE FROM song_scores WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM vocal_scores WHERE request_id = ?", (request_id,))
+        database.execute("DELETE FROM vocal_samples WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM score_events WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM vocal_activity WHERE request_id = ?", (request_id,))
         database.execute("DELETE FROM tv_notifications WHERE request_id = ?", (request_id,))

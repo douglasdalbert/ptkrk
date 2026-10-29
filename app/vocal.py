@@ -23,29 +23,79 @@ def vocal_boost_charge(database: sqlite3.Connection, request_id: str) -> float:
     return min(1.0, group["singing_ms"] / vocal_boost_fill_ms()) if group else 0.0
 
 
+SAMPLE_SPAN_MS = 2000
+
+
+def _overlap(start: int, end: int, covered: list[tuple[int, int]]) -> int:
+    return sum(max(0, min(end, right) - max(start, left)) for left, right in covered)
+
+
+def _merge(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def vocal_group_score(database: sqlite3.Connection, request_id: str) -> dict | None:
-    # Groups alternate stanzas, so everyone's voiced time is judged as a single combined singer.
-    row = database.execute(
-        "SELECT COUNT(*) AS singers, SUM(hit_ms) AS hit_ms, SUM(evaluated_ms) AS evaluated_ms, "
-        "SUM(boosted_ms) AS boosted_ms, SUM(calibration_ms) AS calibration_ms, "
-        "SUM(hits) AS hits, SUM(penalties) AS penalties FROM vocal_scores WHERE request_id = ?",
+    rows = database.execute(
+        "SELECT vocal_scores.* FROM vocal_scores "
+        "LEFT JOIN requests ON requests.id = vocal_scores.request_id "
+        "LEFT JOIN backvocals ON backvocals.request_id = vocal_scores.request_id "
+        "AND backvocals.singer_id = vocal_scores.singer_id "
+        "WHERE vocal_scores.request_id = ? "
+        "ORDER BY vocal_scores.singer_id != requests.singer_id, backvocals.rowid, vocal_scores.singer_id",
         (request_id,),
-    ).fetchone()
-    if not row["singers"]:
+    ).fetchall()
+    if not rows:
         return None
-    points = vocal_points(row["hit_ms"], row["evaluated_ms"], row["boosted_ms"])
+    hit_ms = evaluated_ms = boosted_ms = singing_ms = 0.0
+    if len(rows) == 1:
+        row = rows[0]
+        hit_ms, evaluated_ms, boosted_ms = row["hit_ms"], row["evaluated_ms"], row["boosted_ms"]
+        singing_ms = row["calibration_ms"] + row["evaluated_ms"]
+    else:
+        # Singing together counts once: the lead has priority, then backvocals in joining order;
+        # each singer only scores the parts of the video that nobody ahead of them already covered.
+        scored: list[tuple[int, int]] = []
+        sung: list[tuple[int, int]] = []
+        for row in rows:
+            samples = database.execute(
+                "SELECT start_ms, end_ms, voiced_ms, evaluated, hit, boosted FROM vocal_samples "
+                "WHERE request_id = ? AND singer_id = ? ORDER BY end_ms",
+                (request_id, row["singer_id"]),
+            ).fetchall()
+            new_scored, new_sung = [], []
+            for sample in samples:
+                start, end, voiced = sample["start_ms"], sample["end_ms"], sample["voiced_ms"]
+                span = end - start
+                singing_ms += voiced * (span - _overlap(start, end, sung)) / span
+                new_sung.append((start, end))
+                if not sample["evaluated"]:
+                    continue
+                share = voiced * (span - _overlap(start, end, scored)) / span
+                evaluated_ms += share
+                hit_ms += share if sample["hit"] else 0
+                boosted_ms += share if sample["boosted"] else 0
+                new_scored.append((start, end))
+            scored = _merge(scored + new_scored)
+            sung = _merge(sung + new_sung)
+    points = vocal_points(hit_ms, evaluated_ms, boosted_ms)
     return {
         "request_id": request_id,
         "mode": "vocal",
-        "singers": row["singers"],
+        "singers": len(rows),
         "points": round(points, 1),
         "percent": round(points * 100 / max_score(), 1),
         "ranking_max": max_score(),
-        "hits": row["hits"],
-        "penalties": row["penalties"],
-        "evaluated_ms": row["evaluated_ms"],
-        "singing_ms": row["calibration_ms"] + row["evaluated_ms"],
-        "boosted_ms": row["boosted_ms"],
+        "hits": sum(row["hits"] for row in rows),
+        "penalties": sum(row["penalties"] for row in rows),
+        "evaluated_ms": round(evaluated_ms),
+        "singing_ms": round(singing_ms),
+        "boosted_ms": round(boosted_ms),
     }
 
 
@@ -163,6 +213,12 @@ def record_vocal_sample(
         "WHERE request_id = ? AND singer_id = ?",
         (calibration, loudness_sum, jitter_sum, rate, points, hits, penalties, level, good, bad,
          position_ms, hit_ms, evaluated_ms, boosted_ms, request_id, singer_id),
+    )
+    database.execute(
+        "INSERT OR IGNORE INTO vocal_samples(request_id, singer_id, start_ms, end_ms, voiced_ms, evaluated, hit, boosted) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (request_id, singer_id, max(row["last_position_ms"], position_ms - SAMPLE_SPAN_MS), position_ms,
+         voiced_ms, int(result != "calibrating"), int(result == "hit"), int(boosted)),
     )
     score = next(score for score in vocal_snapshot(database, request_id) if score["singer_id"] == singer_id)
     return {**score, "type": "score_update", "result": result, "feedback": feedback, "boosted": boosted,

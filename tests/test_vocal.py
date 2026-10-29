@@ -121,29 +121,68 @@ class VocalTests(unittest.TestCase):
             final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
             self.assertEqual(final["points"], 1000)
 
+    def add_backvocals(self, *names):
+        for singer in names:
+            self.database.execute("INSERT INTO singers(id, name, session_hash) VALUES (?, ?, ?)",
+                                  (singer, singer.title(), f"hash-{singer}"))
+            self.database.execute(
+                "INSERT INTO backvocals(request_id, singer_id, accepted, joined, score_eligible) VALUES ('r', ?, 1, 1, 1)",
+                (singer,),
+            )
+
+    def sing(self, singer, start, end, offset=0, jitter=10):
+        score = None
+        for position in range(start + offset, end + offset, 1000):
+            score = record_vocal_sample(
+                self.database, "r", singer, f"{singer}-{position}", position, 180000,
+                1000, 0.2, jitter, self.captions,
+            ) or score
+        return score
+
     def test_group_vocal_score_combines_alternating_singers_as_one(self):
-        self.database.execute("INSERT INTO singers(id, name, session_hash) VALUES ('b', 'Bia', 'hash-b')")
-        self.database.execute(
-            "INSERT INTO backvocals(request_id, singer_id, accepted, joined, score_eligible) VALUES ('r', 'b', 1, 1, 1)"
-        )
+        self.add_backvocals("b")
         for singer, start in (("s", 11000), ("b", 51000)):
-            for position in range(start, start + 40000, 1000):
-                score = record_vocal_sample(
-                    self.database, "r", singer, f"{singer}-{position}", position, 180000,
-                    1000, 0.2, 10, self.captions,
-                )
+            score = self.sing(singer, start, start + 40000)
             self.assertEqual(score["points"], 500)
         self.assertEqual(score["group"]["points"], 1000)
-        self.assertEqual(score["group"]["singing_ms"], 80000)
+        # A hand-off with no pause may share up to one sample window with the previous singer.
+        self.assertGreaterEqual(score["group"]["singing_ms"], 79000)
+        self.assertLessEqual(score["group"]["singing_ms"], 80000)
         self.assertEqual([item["points"] for item in score_snapshot(self.database, "r", self.captions)], [500, 500])
         with patch.dict("os.environ", {"KARAOKE_VOCAL_BOOST_FILL_MS": "100000"}):
-            self.assertEqual(vocal_boost_charge(self.database, "r"), 0.8)
+            self.assertGreaterEqual(vocal_boost_charge(self.database, "r"), 0.79)
         final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
         self.assertEqual(final["points"], 1000)
         self.assertEqual(
             [row[0] for row in self.database.execute("SELECT points FROM score_history WHERE request_id = 'r'")],
             [1000, 1000],
         )
+
+    def test_group_singing_together_scores_only_one_voice_with_lead_priority(self):
+        self.add_backvocals("b", "c")
+        # Everyone calibrates together, then sings 10 s together; then the lead stops
+        # and the two backvocals sing 10 s together, with Bia hitting and Caio missing.
+        for singer in ("s", "b", "c"):
+            self.sing(singer, 11000, 31000)
+        self.sing("s", 31000, 41000)
+        self.sing("b", 31000, 51000)
+        score = self.sing("c", 31000, 51000, jitter=100)
+        self.assertEqual(score["group"]["evaluated_ms"], 20000)
+        self.assertEqual(score["group"]["points"], 500)
+        self.assertEqual(score["group"]["singing_ms"], 40000)
+        final = finalize_performance(self.database, "r", self.captions, self.root / "missing.jpg")
+        self.assertEqual(final["points"], 500)
+
+    def test_group_lead_has_priority_even_when_backvocal_sings_better(self):
+        self.add_backvocals("b")
+        self.sing("s", 11000, 31000)
+        self.sing("b", 11000, 31000, offset=300)
+        self.sing("s", 31000, 51000, jitter=100)
+        score = self.sing("b", 31000, 51000, offset=300)
+        group = score["group"]
+        self.assertLess(group["points"], 10)
+        self.assertGreaterEqual(group["evaluated_ms"], 20000)
+        self.assertLess(group["evaluated_ms"], 20500)
 
     def test_energy_migration_preserves_existing_vocal_scores(self):
         self.calibrate()

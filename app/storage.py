@@ -200,6 +200,17 @@ def initialize() -> None:
                 boosted_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (request_id, singer_id)
             );
+            CREATE TABLE IF NOT EXISTS vocal_samples (
+                request_id TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
+                start_ms INTEGER NOT NULL,
+                end_ms INTEGER NOT NULL,
+                voiced_ms INTEGER NOT NULL,
+                evaluated INTEGER NOT NULL,
+                hit INTEGER NOT NULL,
+                boosted INTEGER NOT NULL,
+                PRIMARY KEY (request_id, singer_id, end_ms)
+            );
             CREATE TABLE IF NOT EXISTS score_history (
                 request_id TEXT NOT NULL,
                 singer_id TEXT NOT NULL REFERENCES singers(id) ON DELETE CASCADE,
