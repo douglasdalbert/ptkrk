@@ -11,13 +11,13 @@ def vocal_calibration_ms() -> int:
 
 
 def vocal_evaluation_ms() -> int:
-    return integer_setting("KARAOKE_VOCAL_EVALUATION_MS", 20000, 1000, 120000)
+    return integer_setting("KARAOKE_VOCAL_EVALUATION_MS", 40000, 1000, 120000)
 
 
 def vocal_points(hit_ms: int, evaluated_ms: int) -> float:
     if evaluated_ms <= 0:
         return 0.0
-    quality = hit_ms / (hit_ms + (evaluated_ms - hit_ms) * 0.5) if hit_ms else 0
+    quality = hit_ms / evaluated_ms
     return max_score() * quality * min(1, evaluated_ms / vocal_evaluation_ms())
 
 

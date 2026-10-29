@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,7 +18,7 @@ class VocalTests(unittest.TestCase):
         self.media_patch = patch("app.storage.MEDIA_ROOT", self.root)
         self.environment = patch.dict("os.environ", {
             "KARAOKE_SCORE_MAX": "1000", "KARAOKE_VOCAL_CALIBRATION_MS": "20000",
-            "KARAOKE_VOCAL_EVALUATION_MS": "20000",
+            "KARAOKE_VOCAL_EVALUATION_MS": "40000",
         })
         self.database_patch.start()
         self.media_patch.start()
@@ -55,18 +56,18 @@ class VocalTests(unittest.TestCase):
         self.assertEqual(score["points"], 0)
         self.assertEqual(score["level"], 2)
         self.assertEqual(score["evaluated_ms"], 0)
-        self.assertEqual(self.sample(31000)["points"], 50)
-        self.assertEqual(self.sample(32000, jitter=90)["points"], 66.7)
-        self.assertEqual(self.sample(33000, voiced=500)["points"], 93.8)
+        self.assertEqual(self.sample(31000)["points"], 25)
+        self.assertEqual(self.sample(32000, jitter=90)["points"], 25)
+        self.assertEqual(self.sample(33000, voiced=500)["points"], 37.5)
 
     def test_short_and_long_songs_have_same_normalized_opportunity(self):
         for duration in (60000, 180000, 360000):
             with self.subTest(duration=duration):
                 self.database.execute("DELETE FROM vocal_scores")
                 self.database.execute("DELETE FROM score_events")
-                for position in range(11000, 31000, 1000):
+                for position in range(1000, 21000, 1000):
                     self.sample(position, duration=duration)
-                for position in range(31000, duration + 1, 1000):
+                for position in range(21000, duration + 1, 1000):
                     score = self.sample(position, duration=duration)
                 self.assertEqual(score["points"], 1000)
 
@@ -116,8 +117,8 @@ class VocalTests(unittest.TestCase):
         self.calibrate()
         self.sample(31000)
         self.assertEqual(self.sample(32000, loudness=0.1)["result"], "miss")
-        self.assertEqual(self.sample(33000, loudness=0.1)["points"], 75)
-        self.assertEqual(self.sample(34000, loudness=0.1)["points"], 80)
+        self.assertEqual(self.sample(33000, loudness=0.1)["points"], 25)
+        self.assertEqual(self.sample(34000, loudness=0.1)["points"], 25)
 
     def test_caption_tracks_with_only_empty_text_use_vocal_scoring(self):
         self.captions.write_text(json.dumps({"duration_ms": 180000, "bars": [
@@ -195,10 +196,13 @@ class VocalTests(unittest.TestCase):
         self.assertEqual(final["points"], score["points"])
 
     def test_exact_quality_examples_and_minimum_evidence(self):
-        for hits, errors, expected in [(39, 0, 1000), (39, 5, 939.8), (39, 10, 886.4), (20, 20, 666.7)]:
+        for hits, errors, expected in [
+            (20, 0, 500), (39, 0, 975), (40, 0, 1000),
+            (40, 5, 888.9), (40, 10, 800), (20, 20, 500),
+        ]:
             self.assertEqual(round(vocal_points(hits * 1000, (hits + errors) * 1000), 1), expected)
-        self.assertEqual(vocal_points(1000, 1000), 50)
-        self.assertEqual(vocal_points(10000, 10000), 500)
+        self.assertEqual(vocal_points(1000, 1000), 25)
+        self.assertEqual(vocal_points(10000, 10000), 250)
         self.assertEqual(vocal_points(0, 20000), 0)
         self.assertEqual(vocal_points(0, 0), 0)
         with patch.dict("os.environ", {"KARAOKE_SCORE_MAX": "2000", "KARAOKE_VOCAL_EVALUATION_MS": "10000"}):
@@ -213,7 +217,7 @@ class VocalTests(unittest.TestCase):
         initialize()
         score = score_snapshot(self.database, "r", self.captions)[0]
         self.assertEqual(score["evaluated_ms"], 1500)
-        self.assertEqual(score["points"], 37.5)
+        self.assertEqual(score["points"], 12.5)
 
     def test_legacy_active_scores_migrate_to_quality_without_resetting_calibration(self):
         self.database.execute("ALTER TABLE vocal_scores DROP COLUMN hit_ms")
@@ -227,7 +231,14 @@ class VocalTests(unittest.TestCase):
         score = score_snapshot(self.database, "r", self.captions)[0]
         self.assertEqual(score["level"], 2)
         self.assertEqual(score["evaluated_ms"], 44000)
-        self.assertEqual(score["points"], 939.8)
+        self.assertEqual(score["points"], 886.4)
+
+    def test_default_evaluation_requires_forty_seconds(self):
+        with patch.dict("os.environ"):
+            os.environ.pop("KARAOKE_VOCAL_EVALUATION_MS", None)
+            self.assertEqual(vocal_evaluation_ms(), 40000)
+            self.assertEqual(vocal_points(20000, 20000), 500)
+            self.assertEqual(vocal_points(40000, 40000), 1000)
 
     def test_settings_are_bounded(self):
         with patch.dict("os.environ", {"KARAOKE_VOCAL_CALIBRATION_MS": "0", "KARAOKE_VOCAL_EVALUATION_MS": "999999"}):
