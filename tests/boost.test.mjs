@@ -23,10 +23,15 @@ test("energy gradient closes its color cycle and scrolls exactly one tile in eve
 });
 
 function element() {
+  const classes = new Set();
   return {
     hidden: false, disabled: false, dataset: {}, children: [], events: {},
     style: { setProperty() {} },
-    classList: { add() {}, remove() {} },
+    classList: {
+      add(...names) { names.forEach(name => classes.add(name)); },
+      remove(...names) { names.forEach(name => classes.delete(name)); },
+      contains(name) { return classes.has(name); },
+    },
     setAttribute() {},
     addEventListener(event, callback) { this.events[event] = callback; },
     append(...children) { this.children.push(...children); },
@@ -39,7 +44,7 @@ function tvContext(scoringMode = "vocal") {
     scoringMode, activeId: "song", activeSingerId: "singer",
     boostCharge: 0, boostRemainingMs: 0, boostFrameAt: null, boostUsed: false,
     vocalBoostFillMs: 40000, boostDurationMs: 30000, boostMultiplier: 2, boostFillPercent: 25,
-    boostedBlocks: new Set(), boostBar: element(), boostLabel: element(), boostStars: element(),
+    boostedBlocks: new Set(), boostBar: element(), boostLabel: element(), boostFrame: element(), boostStars: element(),
     show: element(), video: { paused: false, ended: false }, captionBars: Array(4),
     overlay: { clientWidth: 1000, clientHeight: 600 }, barPosition: 1,
     svgNamespace: "http://www.w3.org/2000/svg", starColors: ["#fff"],
@@ -53,6 +58,23 @@ function tvContext(scoringMode = "vocal") {
     tvSource.indexOf("function stopPlayback(")), context);
   return context;
 }
+
+test("only karaoke hides the special frame, preserving other effects across mode changes", () => {
+  const tv = tvContext();
+  for (const mode of ["vocal", "captions", "vocal"]) {
+    tv.scoringMode = mode;
+    tv.resetBoost();
+    tv.boostCharge = 1;
+    tv.startBoost();
+    assert.equal(tv.boostFrame.hidden, mode === "vocal");
+    assert.equal(tv.show.classList.contains("boost-active"), true);
+    assert.equal(tv.boostBar.dataset.state, "active");
+    tv.spawnBoostStar();
+    assert.equal(tv.boostStars.children.length, 1);
+    tv.endBoost();
+    assert.equal(tv.show.classList.contains("boost-active"), false);
+  }
+});
 
 test("karaoke fills at exactly 40000 ms, allows one special and hides its spent bar", () => {
   const tv = tvContext();

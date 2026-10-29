@@ -14,6 +14,7 @@ const captionSwitcher = document.querySelector("#caption-switcher");
 const captionOptions = document.querySelector("#caption-options");
 const boostBar = document.querySelector("#boost-bar");
 const boostLabel = document.querySelector("#boost-label");
+const boostFrame = document.querySelector("#boost-frame");
 const boostStars = document.querySelector("#boost-stars");
 const starColors = ["#ff2bd6", "#00e5ff", "#39ff88", "#fff34d", "#b58cff"];
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -135,6 +136,7 @@ function formatNumber(value, digits = 1) {
 
 function updateBoostBar() {
   const active = boostRemainingMs > 0;
+  boostFrame.hidden = scoringMode === "vocal";
   boostBar.style.visibility = scoringMode === "vocal" && boostUsed && !active ? "hidden" : "";
   const level = active ? boostRemainingMs / boostDurationMs : boostCharge;
   boostBar.style.setProperty("--boost", level.toFixed(4));
