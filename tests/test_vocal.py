@@ -91,6 +91,23 @@ class VocalTests(unittest.TestCase):
         self.assertGreater(score["points"], 0)
         self.assertLess(score["points"], 1000)
 
+    def test_contextual_feedback_distinguishes_errors_streaks_and_recovery(self):
+        self.assertEqual(self.calibrate()["feedback"], "calibrating")
+        self.assertEqual(self.sample(31000)["feedback"], "steady")
+        self.assertEqual(self.sample(32000)["feedback"], "steady")
+        self.assertEqual(self.sample(33000)["feedback"], "streak")
+        self.assertEqual(self.sample(34000)["feedback"], "streak")
+        self.assertEqual(self.sample(35000, loudness=0.1)["feedback"], "quiet")
+        self.assertEqual(self.sample(36000)["feedback"], "recovering")
+        for position in range(37000, 42000, 1000):
+            self.assertEqual(self.sample(position, jitter=100)["feedback"], "unstable")
+        score = self.sample(42000)
+        self.assertEqual(score["feedback"], "recovering")
+        self.assertEqual(score["request_id"], "r")
+        for position in range(43000, 48000, 1000):
+            score = self.sample(position)
+        self.assertEqual(score["level"], 3)
+
     def test_duplicates_overlap_invalid_and_uncertain_samples_do_not_count(self):
         score = self.sample(1000)
         self.assertEqual(score["calibration_ms"], 1000)

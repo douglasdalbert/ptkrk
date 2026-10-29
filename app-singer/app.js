@@ -1,6 +1,6 @@
 import { ConfirmDialog } from "./confirm-dialog.js";
 import { VocalSampler } from "./vocal-analysis.js";
-import { renderVocalFeedback, vocalLabels } from "./vocal-feedback.js";
+import { renderVocalFeedback, setVocalDetectionFeedback, vocalLabels } from "./vocal-feedback.js";
 
 const storageKey = "karaoke.singer";
 const entry = document.querySelector("#entry");
@@ -851,6 +851,9 @@ function sampleMicrophone() {
   }
   if (scoringMode === "vocal" && performance.now() - lastVocalDiagnosticAt >= 1000) {
     lastVocalDiagnosticAt = performance.now();
+    if (position !== null && socket?.readyState === WebSocket.OPEN) {
+      setVocalDetectionFeedback(vocalFeedback, vocalSampler.status);
+    }
     const input = `Entrada ${(rms * 100).toFixed(1)}% · mínimo ${(microphoneRmsThreshold * 100).toFixed(1)}%`;
     vocalDetection.textContent = position === null ? "Aguardando reprodução e sincronismo da TV." :
       socket?.readyState !== WebSocket.OPEN ? "Aguardando conexão com o servidor." :

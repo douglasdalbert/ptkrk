@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detectPitch, VocalSampler } from "../app-singer/vocal-analysis.js";
-import { renderVocalFeedback } from "../app-singer/vocal-feedback.js";
+import { renderVocalFeedback, setVocalDetectionFeedback, vocalMessages } from "../app-singer/vocal-feedback.js";
 
 function tone(frequency, amplitude = 0.2, rate = 48000) {
   return Float32Array.from({ length: 2048 }, (_, index) =>
@@ -81,14 +81,22 @@ test("diagnostics distinguish insufficient volume from unpitched sound", () => {
   assert.equal(sampler.status, "voiced");
 });
 
-test("pug feedback covers five states and clamps only the graphic, not points", () => {
-  const nodes = new Map(["use", ".vocal-label", "progress", ".vocal-points"].map(key => [key, {
+function feedbackFixture() {
+  const nodes = new Map(["use", ".vocal-label", ".vocal-message", "progress", ".vocal-points"].map(key => [key, {
+    dataset: {},
     attributes: {}, setAttribute(name, value) { this.attributes[name] = value; },
   }]));
   const element = { dataset: {}, querySelector: key => nodes.get(key) };
+  return { nodes, element };
+}
+
+test("pug feedback keeps calibration progress but never displays score progress", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { nodes, element } = feedbackFixture();
   renderVocalFeedback(element, null, 20000);
   assert.equal(element.dataset.state, "waiting");
   assert.equal(nodes.get("progress").value, 0);
+  assert.equal(nodes.get("progress").hidden, false);
   assert.equal(nodes.get(".vocal-points").hidden, true);
   assert.equal(nodes.get("progress").attributes["aria-label"], "Calibração da voz");
   renderVocalFeedback(element, { level: -1, calibration_ms: 10000 }, 20000);
@@ -97,13 +105,64 @@ test("pug feedback covers five states and clamps only the graphic, not points", 
     renderVocalFeedback(element, { level, points: 1250, ranking_max: 1000, percent: 125 }, 20000, true);
     assert.equal(nodes.get(".vocal-points").hidden, false);
     assert.equal(element.dataset.state, state);
-    assert.equal(nodes.get("progress").value, 100);
+    assert.equal(nodes.get("progress").value, 0);
+    assert.equal(nodes.get("progress").hidden, true);
     assert.match(nodes.get(".vocal-points").textContent, /1\.250/);
     assert.equal(nodes.get("use").attributes.href, `/assets/vocal-pugs.svg#${state}`);
     assert.equal(nodes.get(".vocal-label").textContent,
       ["Vamos recuperar!", "Está se engasgando?!?", "Está indo bem...", "Dando show!"][level]);
-    assert.equal(nodes.get("progress").attributes["aria-label"], "Solta a voz!");
+    assert.equal(nodes.get("progress").attributes["aria-label"], "Calibração da voz");
   }
   renderVocalFeedback(element, {level: 2, points: 750, ranking_max: 1000, percent: 75}, 20000, false);
   assert.equal(nodes.get(".vocal-points").hidden, true);
+});
+
+test("twenty contextual messages rotate with a three-second minimum and expire neutrally", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  const advance = ms => { now += ms; t.mock.timers.tick(ms); };
+  const { nodes, element } = feedbackFixture();
+  const message = nodes.get(".vocal-message");
+  assert.equal(Object.values(vocalMessages).flat().length, 20);
+  const score = { request_id: "r", singer_id: "s", level: 2, calibration_ms: 5000,
+    evaluated_ms: 1000, points: 33, ranking_max: 1000, feedback: "steady" };
+  renderVocalFeedback(element, score);
+  assert.equal(message.textContent, vocalMessages.steady[0]);
+  renderVocalFeedback(element, { ...score, evaluated_ms: 2000, feedback: "quiet" });
+  assert.equal(message.textContent, vocalMessages.steady[0]);
+  advance(3000);
+  assert.equal(message.textContent, vocalMessages.quiet[0]);
+  renderVocalFeedback(element, { ...score, evaluated_ms: 3000, feedback: "recovering" });
+  advance(3000);
+  assert.equal(message.textContent, vocalMessages.recovering[0]);
+  advance(3000);
+  assert.equal(message.textContent, vocalMessages.waiting[0]);
+  setVocalDetectionFeedback(element, "uncertain");
+  advance(3000);
+  assert.equal(message.textContent, vocalMessages.uncertain[0]);
+  renderVocalFeedback(element, { ...score, evaluated_ms: 4000 });
+  advance(3000);
+  assert.equal(message.textContent, vocalMessages.steady[1]);
+  renderVocalFeedback(element, { ...score, request_id: "next", level: -1, calibration_ms: 0 });
+  assert.equal(message.textContent, vocalMessages.calibrating[0]);
+  setVocalDetectionFeedback(element, "quiet");
+  advance(3000);
+  assert.equal(message.textContent, vocalMessages.calibrating[0]);
+});
+
+test("snapshots do not overwrite recent feedback and a late detailed update is accepted", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  const { nodes, element } = feedbackFixture();
+  const score = { request_id: "r", singer_id: "s", level: 3, calibration_ms: 5000,
+    evaluated_ms: 3000, points: 100, ranking_max: 1000 };
+  renderVocalFeedback(element, score);
+  renderVocalFeedback(element, { ...score, feedback: "streak" });
+  now = 3000;
+  t.mock.timers.tick(3000);
+  assert.equal(nodes.get(".vocal-message").textContent, vocalMessages.streak[0]);
+  renderVocalFeedback(element, score);
+  assert.equal(nodes.get(".vocal-message").textContent, vocalMessages.streak[0]);
 });

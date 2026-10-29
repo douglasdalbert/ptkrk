@@ -33,6 +33,7 @@ def has_timed_captions(path: Path | None) -> bool:
 def vocal_snapshot(database: sqlite3.Connection, request_id: str) -> list[dict]:
     return [{
         "singer_id": row["singer_id"],
+        "request_id": request_id,
         "name": row["name"],
         "mode": "vocal",
         "points": round(vocal_points(row["hit_ms"], row["evaluated_ms"]), 1),
@@ -85,6 +86,7 @@ def record_vocal_sample(
     hit_ms, evaluated_ms = row["hit_ms"], row["evaluated_ms"]
     level, good, bad = row["level"], row["good_streak"], row["bad_streak"]
     result = "calibrating"
+    feedback = "calibrating"
     if rate is None:
         calibration += voiced_ms
         loudness_sum += loudness * voiced_ms
@@ -96,6 +98,9 @@ def record_vocal_sample(
         # Compare short-term changes, not absolute notes: melodic transitions are handled by the singer.
         tolerance = max(45, min(70, jitter_sum / calibration * 1.8))
         hit = jitter <= tolerance and loudness >= loudness_sum / calibration * 0.55
+        feedback = ("recovering" if bad else "streak" if good >= 2 else "steady") if hit else (
+            "unstable" if jitter > tolerance else "quiet"
+        )
         result = "hit" if hit else "miss"
         evaluated_ms += voiced_ms
         hit_ms += voiced_ms if hit else 0
@@ -103,10 +108,10 @@ def record_vocal_sample(
         hits += int(hit)
         penalties += int(not hit)
         good, bad = (good + 1, 0) if hit else (0, bad + 1)
-        if good >= 3:
-            level, good = min(3, level + 1), 0
-        if bad >= 5:
-            level, bad = max(0, level - 1), 0
+        if good and good % 3 == 0:
+            level = min(3, level + 1)
+        if bad and bad % 5 == 0:
+            level = max(0, level - 1)
     database.execute(
         "UPDATE vocal_scores SET calibration_ms = ?, loudness_sum = ?, jitter_sum = ?, point_rate = ?, "
         "points = ?, hits = ?, penalties = ?, level = ?, good_streak = ?, bad_streak = ?, last_position_ms = ?, "
@@ -116,4 +121,4 @@ def record_vocal_sample(
          position_ms, hit_ms, evaluated_ms, request_id, singer_id),
     )
     score = next(score for score in vocal_snapshot(database, request_id) if score["singer_id"] == singer_id)
-    return {**score, "type": "score_update", "request_id": request_id, "result": result}
+    return {**score, "type": "score_update", "result": result, "feedback": feedback}

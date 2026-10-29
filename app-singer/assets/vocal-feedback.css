@@ -1,6 +1,13 @@
 .vocal-feedback { display:grid; grid-template-columns:90px minmax(0,1fr); align-items:center; gap:4px 12px; padding:12px; border:1px solid #ffffff40; border-radius:16px; background:#101719e8; color:#f3f5ef; --vocal-color:#64d4c3; }
-.vocal-feedback svg { grid-row:1 / 4; width:90px; height:82px; }
-.vocal-feedback .vocal-label { font-size:14px; }
+.vocal-feedback svg { grid-row:1 / 5; width:90px; height:82px; }
+.vocal-feedback .vocal-label { font-size:20px; line-height:1.3; overflow-wrap:anywhere; }
+.vocal-feedback .vocal-message { font-size:18px; line-height:1.4; color:#d5e0dc; overflow-wrap:anywhere; }
+.vocal-feedback .vocal-message[data-feedback="unstable"],
+.vocal-feedback .vocal-message[data-feedback="quiet"] { color:#ffcc72; }
+.vocal-feedback .vocal-message[data-feedback="steady"],
+.vocal-feedback .vocal-message[data-feedback="streak"],
+.vocal-feedback .vocal-message[data-feedback="recovering"] { color:#a5ebc7; }
+.vocal-feedback progress[hidden] { display:none; }
 .vocal-feedback .vocal-points { font-size:12px; font-variant-numeric:tabular-nums; }
 .vocal-feedback progress { width:100%; height:12px; border:0; border-radius:8px; overflow:hidden; background:#ffffff20; accent-color:var(--vocal-color); }
 .vocal-feedback progress::-webkit-progress-bar { background:#ffffff20; }
