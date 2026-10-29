@@ -76,7 +76,7 @@ export function renderVocalFeedback(element, score = null, calibrationMs = 5000,
   element.dataset.state = face;
   element.querySelector("use").setAttribute("href", `/assets/vocal-pugs.svg#${face}`);
   element.querySelector(".vocal-label").textContent = calibrating ?
-    `Conhecendo sua voz · ${Math.floor(learned / 1000)}/${Math.ceil(target / 1000)}s` : vocalLabels[level];
+    `Conhecendo sua voz · ${Math.floor(learned / 1000)}/${Math.ceil(target / 1000)}` : vocalLabels[level];
   const meter = element.querySelector("progress");
   meter.hidden = !calibrating;
   meter.value = calibrating ? learned * 100 / target : 0;
