@@ -165,9 +165,9 @@ def record_onset(
     singer_id: str,
     event_id: str,
     position_ms: int,
-    caption_path: Path,
+    caption_path: Path | None,
 ) -> dict | None:
-    if not caption_path.is_file():
+    if caption_path is None or not caption_path.is_file():
         return None
     try:
         captions = json.loads(caption_path.read_text(encoding="utf-8"))
@@ -245,10 +245,10 @@ def record_block_result(
     event_id: str,
     block_index: int,
     hit: bool,
-    caption_path: Path,
+    caption_path: Path | None,
     boosted: bool = False,
 ) -> dict | None:
-    if not caption_path.is_file():
+    if caption_path is None or not caption_path.is_file():
         return None
     try:
         bars = usable_caption_bars(json.loads(caption_path.read_text(encoding="utf-8")))
@@ -326,9 +326,9 @@ def record_offcue_penalty(
     singer_id: str,
     event_id: str,
     position_ms: int,
-    caption_path: Path,
+    caption_path: Path | None,
 ) -> dict | None:
-    if not caption_path.is_file():
+    if caption_path is None or not caption_path.is_file():
         return None
     try:
         captions = json.loads(caption_path.read_text(encoding="utf-8"))
@@ -427,7 +427,7 @@ def score_snapshot(database: sqlite3.Connection, request_id: str, caption_path: 
 def finalize_performance(
     database: sqlite3.Connection,
     request_id: str,
-    caption_path: Path,
+    caption_path: Path | None,
     preview_path: Path,
 ) -> dict | None:
     item = database.execute(

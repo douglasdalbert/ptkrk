@@ -1219,7 +1219,7 @@ function renderSearchButtons() {
   searchDialog.querySelectorAll(".search-select").forEach(renderSearchButton);
 }
 
-async function selectVideo(video, status) {
+async function selectVideo(video, status, forceKaraoke) {
   if (sendingVideos.has(video.video_id)) return;
   const existing = myRequestFor(video.video_id);
   if (existing?.status === "failed" && existing.singer_id === singer?.singer_id) {
@@ -1231,7 +1231,10 @@ async function selectVideo(video, status) {
   renderSearchButtons();
   clearError(status);
   try {
-    const created = await api("/api/requests", { method: "POST", body: JSON.stringify({ youtubeCode: video.video_id }) });
+    const created = await api("/api/requests", {
+      method: "POST",
+      body: JSON.stringify({ youtubeCode: video.video_id, forceKaraoke }),
+    });
     // Stay in "sending" until the websocket snapshot lists the request, so the button never flashes back.
     sendingVideos.set(video.video_id, created.id);
     setTimeout(() => {
@@ -1295,7 +1298,7 @@ function renderSearchResults(kind, items) {
     select.className = "search-select";
     select.dataset.videoId = video.video_id;
     select.dataset.title = video.title;
-    select.addEventListener("click", () => selectVideo(video, status));
+    select.addEventListener("click", () => selectVideo(video, status, kind === "karaoke"));
     renderSearchButton(select);
     row.append(media, details, expand, select);
     content.append(row);

@@ -44,6 +44,7 @@ def outdated_ready_captions(excluded: set[tuple[str, str]]) -> tuple[str, str] |
             """SELECT DISTINCT requests.video_id FROM requests
                JOIN ready_queue ON ready_queue.request_id = requests.id
                WHERE requests.status IN ('ready', 'karaokezado') AND ready_queue.position <= 10
+                 AND requests.force_karaoke = 0
                ORDER BY ready_queue.position"""
         ).fetchall()
     for row in rows:
@@ -75,7 +76,7 @@ def process_next() -> bool:
         database.execute("BEGIN IMMEDIATE")
         generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
         item = database.execute(
-            """SELECT requests.id, requests.video_id FROM requests
+            """SELECT requests.id, requests.video_id, requests.force_karaoke FROM requests
                JOIN ready_queue ON ready_queue.request_id = requests.id
                WHERE requests.status = 'pending' AND ready_queue.position <= 10
                  AND NOT EXISTS (SELECT 1 FROM requests AS active
@@ -89,10 +90,11 @@ def process_next() -> bool:
     try:
         title = download_video(item["video_id"], generation)
         create_preview(item["video_id"], generation)
-        try:
-            create_caption_bars(item["video_id"], generation)
-        except Exception:
-            logger.exception("Não foi possível preparar a legenda de %s", item["video_id"])
+        if not item["force_karaoke"]:
+            try:
+                create_caption_bars(item["video_id"], generation)
+            except Exception:
+                logger.exception("Não foi possível preparar a legenda de %s", item["video_id"])
     except Exception as error:
         logger.exception("Falha ao preparar vídeo %s", item["video_id"])
         reason = str(error) if isinstance(error, ValueError) else "Não foi possível baixar/preparar este vídeo"

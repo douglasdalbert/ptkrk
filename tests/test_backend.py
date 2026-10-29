@@ -10,7 +10,7 @@ from unittest.mock import ANY, patch
 from fastapi import HTTPException
 
 from app.captions import CAPTION_VERSION
-from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, youtube_id
+from app.main import NewRequest, create_request, remove_request, request_preview, request_snapshot, retry_request, youtube_id
 from app.media import create_preview, remove_unused_media
 from app.queue import enqueue_request
 from app.separation import (
@@ -83,6 +83,35 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual((row["status"], row["title"]), ("ready", "Minha música"))
         self.assertEqual(separation["status"], "pending")
         self.assertFalse(process_next())
+
+    def test_forced_karaoke_skips_caption_preparation_and_refresh(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET force_karaoke = 1 WHERE id = 'request'")
+        with patch("app.worker.download_video", return_value="Minha música"), \
+             patch("app.worker.create_preview"), patch("app.worker.create_caption_bars") as captions:
+            self.assertTrue(process_next())
+            self.assertIsNone(outdated_ready_captions(set()))
+        captions.assert_not_called()
+        with connection() as database:
+            self.assertEqual(database.execute("SELECT status FROM requests").fetchone()[0], "ready")
+            database.execute("UPDATE requests SET status = 'failed' WHERE id = 'request'")
+        retry_request("request", "singer")
+        with patch("app.worker.download_video", return_value="Minha música"), \
+             patch("app.worker.create_preview"), patch("app.worker.create_caption_bars") as captions:
+            self.assertTrue(process_next())
+        captions.assert_not_called()
+
+    def test_caption_refresh_remains_available_for_playback_sharing_karaoke_cache(self):
+        with connection() as database:
+            database.execute("UPDATE requests SET force_karaoke = 1, status = 'ready' WHERE id = 'request'")
+            database.execute(
+                "INSERT INTO requests(id, singer_id, video_id, status) "
+                "VALUES ('playback', 'singer', 'dQw4w9WgXcQ', 'ready')"
+            )
+            enqueue_request(database, "playback")
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+        with patch("app.worker.MEDIA_ROOT", Path(self.directory.name) / "media"):
+            self.assertEqual(outdated_ready_captions(set()), ("dQw4w9WgXcQ", generation))
 
     def test_cached_instrumental_marks_new_request_karaokezado_without_requeue(self):
         media_root = Path(self.directory.name) / "media"
@@ -337,8 +366,20 @@ class WorkerTests(unittest.TestCase):
     def test_request_persists_youtube_code(self):
         created = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "singer")
         with connection() as database:
-            row = database.execute("SELECT video_id FROM requests WHERE id = ?", (created["id"],)).fetchone()
+            row = database.execute("SELECT video_id, force_karaoke FROM requests WHERE id = ?", (created["id"],)).fetchone()
         self.assertEqual(row["video_id"], "glvVYIhdWlU")
+        self.assertEqual(row["force_karaoke"], 0)
+
+    def test_request_persists_forced_karaoke_and_sharing_keeps_original_mode(self):
+        created = create_request(NewRequest(youtubeCode="glvVYIhdWlU", forceKaraoke=True), "singer")
+        with connection() as database:
+            database.execute("INSERT INTO singers(id,name,session_hash) VALUES ('B','B','B')")
+        shared = create_request(NewRequest(youtubeCode="glvVYIhdWlU"), "B")
+        self.assertEqual(shared["id"], created["id"])
+        with connection() as database:
+            self.assertEqual(database.execute(
+                "SELECT force_karaoke FROM requests WHERE id = ?", (created["id"],)
+            ).fetchone()[0], 1)
 
     def test_backvocals_share_one_video_and_one_queue_position(self):
         for singer_id in ("B", "C"):

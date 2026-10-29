@@ -12,7 +12,9 @@ from app.invitations import start_invitation
 import app.main as main_module
 from app.main import app
 from app.queue import enqueue_request
+from app.scoring import record_block_result, record_offcue_penalty, record_onset
 from app.storage import connection, save_playback_sync
+from app.vocal import record_vocal_sample
 from app.worker import process_next
 
 
@@ -115,6 +117,48 @@ class TvTests(unittest.TestCase):
             response = self.client.get("/api/tv/song/captions").json()
             self.assertEqual(len(response["bars"]), 0 if mode == "vocal" else 1)
             self.assertEqual(response["bar_count"], len(response["bars"]))
+
+    def test_forced_karaoke_ignores_cached_captions_and_finishes_with_vocal_score(self):
+        self.add_ready()
+        with connection() as database:
+            generation = database.execute("SELECT generation FROM party WHERE id=1").fetchone()[0]
+            database.execute("UPDATE requests SET force_karaoke = 1 WHERE id = 'song'")
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+        captions = Path(self.directory.name) / generation / "captions" / "glvVYIhdWlU.json"
+        captions.parent.mkdir(parents=True)
+        captions.write_text(json.dumps({
+            "duration_ms": 180000, "default_track_id": "valid",
+            "tracks": [{"id": "valid", "label": "Legenda"}],
+            "bars": [{"block_index": 0, "text": "Verso", "start_ms": 0, "end_ms": 180000}],
+        }), encoding="utf-8")
+        state = self.client.get("/api/tv/state").json()
+        self.assertEqual(state["scoring_mode"], "vocal")
+        self.assertEqual(state["caption_tracks"], [])
+        self.assertIsNone(state["caption_track_id"])
+        self.assertEqual(main_module.party_snapshot(include_caption_bars=True)["active_bars"], [])
+        self.assertEqual(self.client.get("/api/tv/song/captions").status_code, 404)
+        self.assertEqual(self.client.post(
+            "/api/tv/song/caption-track", headers=self.tv_headers, json={"track_id": "valid"}
+        ).status_code, 404)
+        with connection() as database, patch.dict("os.environ", {"KARAOKE_VOCAL_CALIBRATION_MS": "1000"}):
+            item = database.execute("SELECT * FROM requests WHERE id = 'song'").fetchone()
+            path = main_module.request_caption_path(generation, item)
+            self.assertIsNone(path)
+            self.assertIsNone(record_onset(database, "song", "singer", "onset", 1000, path))
+            self.assertIsNone(record_block_result(database, "song", "singer", "block", 0, True, path))
+            self.assertIsNone(record_offcue_penalty(database, "song", "singer", "offcue", 1000, path))
+            for position in (1000, 2000):
+                score = record_vocal_sample(
+                    database, "song", "singer", f"vocal-{position}", position, 180000, 1000, 0.2, 10, path
+                )
+            self.assertGreater(score["points"], 0)
+        self.assertEqual(self.client.post("/api/tv/song/finish", headers=self.tv_headers).status_code, 200)
+        with connection() as database:
+            history = database.execute("SELECT scoring_mode, points FROM score_history WHERE request_id = 'song'").fetchone()
+            self.assertEqual(history["scoring_mode"], "vocal")
+            self.assertEqual(history["points"], score["points"])
 
     def test_caption_options_exclude_sparse_tracks_and_reject_direct_selection(self):
         self.add_ready()

@@ -124,6 +124,7 @@ def initialize() -> None:
                 title TEXT,
                 error TEXT,
                 caption_track_id TEXT,
+                force_karaoke INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS requests_status_idx ON requests(status, created_at);
@@ -262,6 +263,8 @@ def initialize() -> None:
             database.execute("ALTER TABLE score_events ADD COLUMN offcue_window INTEGER")
         if "caption_track_id" not in {row[1] for row in database.execute("PRAGMA table_info(requests)")}:
             database.execute("ALTER TABLE requests ADD COLUMN caption_track_id TEXT")
+        if "force_karaoke" not in {row[1] for row in database.execute("PRAGMA table_info(requests)")}:
+            database.execute("ALTER TABLE requests ADD COLUMN force_karaoke INTEGER NOT NULL DEFAULT 0")
         if "error" not in {row[1] for row in database.execute("PRAGMA table_info(vocal_separation_jobs)")}:
             database.execute("ALTER TABLE vocal_separation_jobs ADD COLUMN error TEXT")
         if "score_units" not in {row[1] for row in database.execute("PRAGMA table_info(song_scores)")}:

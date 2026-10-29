@@ -116,6 +116,7 @@ class NewSinger(BaseModel):
 
 class NewRequest(BaseModel):
     youtubeCode: str = Field(min_length=11, max_length=11)
+    forceKaraoke: bool = False
 
 
 class NoiseSetting(BaseModel):
@@ -144,7 +145,9 @@ def youtube_id(code: str) -> str:
     return code
 
 
-def request_caption_path(generation: str, item) -> Path:
+def request_caption_path(generation: str, item) -> Path | None:
+    if item["force_karaoke"]:
+        return None
     return selected_caption_path(generation, item["video_id"], item["caption_track_id"])
 
 
@@ -214,7 +217,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         if invitation:
             generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
             current_video = database.execute(
-                "SELECT video_id, caption_track_id FROM requests WHERE id = ?", (invitation["request_id"],)
+                "SELECT video_id, caption_track_id, force_karaoke FROM requests WHERE id = ?", (invitation["request_id"],)
             ).fetchone()
             captions = request_caption_path(generation, current_video) if current_video else None
             scoring_mode = "captions" if has_timed_captions(captions) else "vocal"
@@ -495,7 +498,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id, force_karaoke FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     if owner is None:
                         continue
@@ -532,7 +535,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id, force_karaoke FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     if owner is None:
                         continue
@@ -588,7 +591,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id, force_karaoke FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     singer_id = singer_socket_ids.get(websocket)
                     eligible = owner and owner["singer_id"] == singer_id and invitation["lead_accepted"]
@@ -687,7 +690,7 @@ async def requests_socket(websocket: WebSocket) -> None:
                     if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
                         continue
                     owner = database.execute(
-                        "SELECT singer_id, video_id, caption_track_id FROM requests WHERE id = ?", (request_id,)
+                        "SELECT singer_id, video_id, caption_track_id, force_karaoke FROM requests WHERE id = ?", (request_id,)
                     ).fetchone()
                     if owner is None:
                         continue
@@ -814,11 +817,13 @@ def tv_select_caption_track(request_id: str, selection: CaptionTrackSelection) -
         database.execute("BEGIN IMMEDIATE")
         invitation = invitation_state(database)
         item = database.execute(
-            "SELECT video_id, caption_track_id FROM requests WHERE id = ? AND status IN ('ready', 'karaokezado')",
+            "SELECT video_id, caption_track_id, force_karaoke FROM requests WHERE id = ? AND status IN ('ready', 'karaokezado')",
             (request_id,),
         ).fetchone()
         if not invitation or invitation["request_id"] != request_id or not invitation["accepted"] or item is None:
             raise HTTPException(409, "A música não está em apresentação")
+        if item["force_karaoke"]:
+            raise HTTPException(404, "Legendas indisponíveis para este karaokê")
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
         bundle_path = caption_track_path(generation, item["video_id"])
         try:
@@ -867,7 +872,7 @@ def tv_media(request_id: str, kind: str) -> Response:
         raise HTTPException(404, "Mídia indisponível")
     with connection() as database:
         item = database.execute(
-            "SELECT video_id, caption_track_id, status FROM requests WHERE id = ? "
+            "SELECT video_id, caption_track_id, force_karaoke, status FROM requests WHERE id = ? "
             "AND status IN ('ready', 'karaokezado')", (request_id,)
         ).fetchone()
     if item is None:
@@ -875,6 +880,8 @@ def tv_media(request_id: str, kind: str) -> Response:
     with connection() as database:
         generation = database.execute("SELECT generation FROM party WHERE id = 1").fetchone()[0]
     if kind == "captions":
+        if item["force_karaoke"]:
+            raise HTTPException(404, "Legendas indisponíveis para este karaokê")
         bundle_path = caption_track_path(generation, item["video_id"])
         try:
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
@@ -1067,8 +1074,8 @@ def create_request(payload: NewRequest, singer_id: str = Depends(authenticated_s
                              (existing["id"], singer_id))
             return {"id": existing["id"], "status": existing["status"], "video_id": video_id}
         database.execute(
-            "INSERT INTO requests (id, singer_id, video_id) VALUES (?, ?, ?)",
-            (request_id, singer_id, video_id),
+            "INSERT INTO requests (id, singer_id, video_id, force_karaoke) VALUES (?, ?, ?, ?)",
+            (request_id, singer_id, video_id, payload.forceKaraoke),
         )
         enqueue_request(database, request_id)
     return {"id": request_id, "status": "pending", "video_id": video_id}

@@ -40,10 +40,11 @@ class SingerMigrationTests(unittest.TestCase):
                 initialize()
                 with connection() as database:
                     singer = database.execute("SELECT id, session_hash FROM singers").fetchone()
-                    request = database.execute("SELECT singer_id FROM requests").fetchone()
+                    request = database.execute("SELECT singer_id, force_karaoke FROM requests").fetchone()
                     count = database.execute("SELECT singer_id, total FROM accepted_counts").fetchone()
                     self.assertEqual(tuple(singer), ("singer-1", "saved-token-hash"))
                     self.assertEqual(request[0], singer[0])
+                    self.assertEqual(request["force_karaoke"], 0)
                     self.assertEqual(tuple(count), (singer[0], 3))
                     self.assertEqual(database.execute("SELECT COUNT(*) FROM backvocals").fetchone()[0], 0)
                     self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])

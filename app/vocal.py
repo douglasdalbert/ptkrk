@@ -56,7 +56,7 @@ def vocal_snapshot(database: sqlite3.Connection, request_id: str) -> list[dict]:
 def record_vocal_sample(
     database: sqlite3.Connection, request_id: str, singer_id: str, event_id: str,
     position_ms: int, duration_ms: int, voiced_ms: int, loudness: float, jitter: float,
-    caption_path: Path,
+    caption_path: Path | None,
 ) -> dict | None:
     if has_timed_captions(caption_path):
         return None
