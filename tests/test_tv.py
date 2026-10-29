@@ -56,6 +56,90 @@ class TvTests(unittest.TestCase):
                              "VALUES ('song', 'singer', 'glvVYIhdWlU', 'ready')")
             enqueue_request(database, "song")
 
+    def test_microphone_readiness_is_per_song_and_expires_without_heartbeat(self):
+        self.add_ready()
+        with connection() as database:
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+            database.execute(
+                "INSERT INTO microphone_sessions VALUES ('connection','song','singer',100)"
+            )
+        with patch("app.main.time.time", return_value=104.9):
+            self.assertEqual(main_module.party_snapshot()["microphone_ready_singers"], ["singer"])
+        with patch("app.main.time.time", return_value=105):
+            self.assertEqual(main_module.party_snapshot()["microphone_ready_singers"], [])
+        with connection() as database:
+            database.execute(
+                "INSERT INTO requests(id,singer_id,video_id,status) VALUES ('next','singer','1pLrF_rGLyg','ready')"
+            )
+            database.execute("UPDATE invitation SET request_id = 'next'")
+        with patch("app.main.time.time", return_value=101):
+            self.assertEqual(main_module.party_snapshot()["microphone_ready_singers"], [])
+        self.client.post("/api/tv/reset", headers=self.tv_headers)
+        with connection() as database:
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM microphone_sessions").fetchone()[0], 0)
+
+    def test_microphone_status_tracks_authenticated_group_members_and_each_connection(self):
+        lead, guest, outsider, late = [
+            self.client.post("/api/singers", json={"name": name}).json()
+            for name in ("Ana", "Bia", "Caio", "Dani")
+        ]
+        with connection() as database:
+            database.execute(
+                "INSERT INTO requests(id,singer_id,video_id,status) VALUES ('song',?,'glvVYIhdWlU','ready')",
+                (lead["singer_id"],),
+            )
+            enqueue_request(database, "song")
+            database.execute(
+                "INSERT INTO invitation(id,request_id,deadline,accepted,lead_accepted) VALUES (1,'song',0,1,1)"
+            )
+            for member, accepted, eligible in [(guest, 1, 1), (late, 0, 0)]:
+                database.execute(
+                    "INSERT INTO backvocals(request_id,singer_id,joined,accepted,score_eligible) "
+                    "VALUES ('song',?,1,?,?)", (member["singer_id"], accepted, eligible),
+                )
+
+        def send_status(websocket, **fields):
+            with patch("app.main.can_join_group_room", return_value=True), patch(
+                "app.main.group_room_snapshot", return_value={"type": "test_ack"},
+            ):
+                websocket.send_json({"type": "microphone_status", "request_id": "song", "ready": True, **fields})
+                websocket.send_json({"type": "join_group", "request_id": "song"})
+                while websocket.receive_json()["type"] != "test_ack":
+                    pass
+            return set(main_module.party_snapshot()["microphone_ready_singers"])
+
+        with patch.dict("os.environ", {"KARAOKE_TV_LOCAL": "false"}):
+            with self.client.websocket_connect("/ws/requests") as lead_socket:
+                lead_socket.send_json({"token": lead["token"]})
+                self.assertEqual(lead_socket.receive_json()["microphone_ready_singers"], [])
+                for identity in (outsider, late):
+                    with self.client.websocket_connect("/ws/requests") as rejected:
+                        rejected.send_json({"token": identity["token"]})
+                        rejected.receive_json()
+                        self.assertEqual(send_status(rejected, singer_id=lead["singer_id"]), set())
+                self.assertEqual(send_status(lead_socket, ready="true"), set())
+                self.assertEqual(send_status(lead_socket, request_id="other"), set())
+                self.assertEqual(send_status(lead_socket), {lead["singer_id"]})
+                with self.client.websocket_connect("/ws/requests") as guest_socket:
+                    guest_socket.send_json({"token": guest["token"]})
+                    guest_socket.receive_json()
+                    self.assertEqual(send_status(guest_socket), {lead["singer_id"], guest["singer_id"]})
+                    self.assertEqual(send_status(lead_socket, ready=False), {guest["singer_id"]})
+                    self.assertEqual(send_status(lead_socket), {lead["singer_id"], guest["singer_id"]})
+                self.assertEqual(send_status(lead_socket), {lead["singer_id"]})
+                with self.client.websocket_connect("/ws/requests") as second_device:
+                    second_device.send_json({"token": lead["token"]})
+                    second_device.receive_json()
+                    self.assertEqual(send_status(second_device), {lead["singer_id"]})
+                    self.assertEqual(send_status(lead_socket, ready=False), {lead["singer_id"]})
+                self.assertEqual(send_status(lead_socket, ready=False), set())
+                with connection() as database:
+                    database.execute("UPDATE invitation SET accepted = 0")
+                self.assertEqual(send_status(lead_socket), set())
+        self.assertEqual(main_module.party_snapshot()["microphone_ready_singers"], [])
+
     def test_tv_adjusts_microphone_noise_for_singers_and_reset_restores_default(self):
         with patch.dict("os.environ", {"KARAOKE_SCORE_RMS_THRESHOLD": "0.15"}):
             self.assertEqual(self.client.get("/api/tv/state").json()["microphone_rms_threshold"], 0.15)

@@ -551,6 +551,23 @@ function animateVocalMarker() {
   ], { duration: 420, easing: "ease-out" });
 }
 
+function renderMicrophoneWarning(snapshot) {
+  const warning = document.querySelector("#microphone-warning");
+  const names = document.querySelector("#microphone-warning-names");
+  const invitation = snapshot.invitation;
+  const item = snapshot.items.find(item => item.id === invitation?.request_id);
+  const participants = [];
+  if (item && invitation.accepted && !snapshot.skip && !scoreShow) {
+    if (invitation.lead_accepted) participants.push({ singer_id: item.singer_id, singer_name: item.singer_name });
+    participants.push(...item.backvocals.filter(vocal => vocal.joined === 1 && vocal.accepted && vocal.score_eligible));
+  }
+  const ready = new Set(snapshot.microphone_ready_singers || []);
+  const missing = participants.filter(participant => !ready.has(participant.singer_id));
+  const text = missing.map(participant => participant.singer_name).join(" + ");
+  if (names.textContent !== text) names.textContent = text;
+  warning.hidden = missing.length === 0;
+}
+
 function render(snapshot) {
   if (party && party !== snapshot.party) stopPlayback();
   if (party !== snapshot.party) {
@@ -601,6 +618,7 @@ function render(snapshot) {
   } else if (activeId && (!current || current.id !== activeId || !snapshot.invitation.accepted)) {
     stopPlayback();
   }
+  renderMicrophoneWarning(snapshot);
   const leadScore = activeId && snapshot.scores?.find(score => score.singer_id === activeSingerId);
   if (scoringMode === "vocal" && activeId) {
     boostUsed = boostUsed || !!snapshot.boost_used;

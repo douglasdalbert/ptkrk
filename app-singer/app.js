@@ -69,6 +69,8 @@ let microphoneStream = null;
 let microphoneContext = null;
 let microphoneAnalyser = null;
 let microphoneFrame = null;
+let microphoneRequestId = null;
+let microphoneStarting = false;
 let loudFrameCount = 0;
 let silenceStartedAt = null;
 let silenceStartedPosition = null;
@@ -101,7 +103,7 @@ const errorTimers = new WeakMap();
 function stopMicrophone() {
   if (microphoneFrame !== null) cancelAnimationFrame(microphoneFrame);
   microphoneFrame = null;
-  setMicrophoneSpeaking(false, currentInvitation?.request_id, estimatePlaybackPosition());
+  setMicrophoneSpeaking(false, microphoneRequestId, estimatePlaybackPosition());
   silenceStartedAt = null;
   silenceStartedPosition = null;
   microphoneStream?.getTracks().forEach(track => track.stop());
@@ -109,6 +111,8 @@ function stopMicrophone() {
   microphoneAnalyser = null;
   if (microphoneContext && microphoneContext.state !== "closed") microphoneContext.close();
   microphoneContext = null;
+  microphoneRequestId = null;
+  sendMicrophoneStatus();
   loudFrameCount = 0;
   drawMicrophoneWaveform();
     microphoneButton.textContent = "Ativar microfone";
@@ -588,6 +592,7 @@ function renderSingingOverlay(invitation, items) {
   const isParticipant = item && singer && (item.singer_id === singer.singer_id ||
     item.backvocals.some(vocal => vocal.singer_id === singer.singer_id && vocal.joined === 1));
   const shouldShow = invitation?.accepted && isParticipant;
+  if (microphoneRequestId && microphoneRequestId !== invitation?.request_id) stopMicrophone();
   if (shouldShow && !singingOverlay.open) {
     singingOverlay.showModal();
     drawMicrophoneWaveform();
@@ -602,10 +607,12 @@ function renderSingingOverlay(invitation, items) {
   microphoneButton.hidden = !shouldShow;
   const eligible = shouldShow && (item.singer_id === singer?.singer_id ? invitation.lead_accepted :
     item.backvocals.some(vocal => vocal.singer_id === singer?.singer_id && vocal.score_eligible && vocal.accepted));
-  microphoneButton.disabled = !eligible || !navigator.mediaDevices?.getUserMedia;
+  microphoneButton.disabled = !eligible || microphoneStarting ||
+    (!!microphoneStream && microphoneContext?.state === "running") || !navigator.mediaDevices?.getUserMedia;
   if (!navigator.mediaDevices?.getUserMedia) {
     scoreStatus.textContent = "Microfone requer HTTPS seguro neste aparelho.";
   }
+  sendMicrophoneStatus();
 }
 
 function renderScores() {
@@ -722,6 +729,18 @@ function sendMicrophoneActivity(speaking, requestId, stateSinceMs) {
     state_since_ms: stateSinceMs,
   }));
 }
+
+function sendMicrophoneStatus() {
+  if (!currentInvitation?.accepted || socket?.readyState !== WebSocket.OPEN) return;
+  const ready = singingOverlay.open && microphoneRequestId === currentInvitation.request_id &&
+    microphoneContext?.state === "running" &&
+    !!microphoneStream?.getAudioTracks().some(track => track.readyState === "live" && track.enabled && !track.muted);
+  socket.send(JSON.stringify({
+    type: "microphone_status", request_id: currentInvitation.request_id, ready,
+  }));
+}
+
+setInterval(sendMicrophoneStatus, 1000);
 
 function setMicrophoneSpeaking(speaking, requestId, positionMs) {
   if (microphoneSpeaking === speaking) return;
@@ -865,14 +884,72 @@ function sampleMicrophone() {
   microphoneFrame = requestAnimationFrame(sampleMicrophone);
 }
 
+function microphoneErrorMessage(problem) {
+  switch (problem?.name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "Permissão do microfone negada. Libere o microfone para este site no navegador e toque novamente.";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "Nenhum microfone encontrado neste aparelho.";
+    case "NotReadableError":
+    case "AbortError":
+      return "O microfone está em uso por outro app ou não pôde ser iniciado. Feche outros apps e tente de novo.";
+    default:
+      return `Não foi possível acessar o microfone (${problem?.name || "erro desconhecido"}). Verifique a permissão e o HTTPS.`;
+  }
+}
+
+function handleMicrophoneSuspended() {
+  sendMicrophoneStatus();
+  if (!microphoneStream || microphoneContext?.state === "running") return;
+  microphoneButton.textContent = "Retomar microfone";
+  microphoneButton.disabled = false;
+  scoreStatus.textContent = "Microfone pausado pelo navegador. Toque em \"Retomar microfone\".";
+}
+
 microphoneButton.addEventListener("click", async () => {
+  if (microphoneStarting) return;
+  if (microphoneStream && microphoneContext && microphoneContext.state !== "closed") {
+    // Firefox and Safari may suspend the context; resuming requires this user gesture.
+    microphoneButton.disabled = true;
+    try {
+      await microphoneContext.resume();
+    } catch {}
+    if (microphoneContext?.state === "running") {
+      microphoneButton.textContent = "Microfone ativo";
+      scoreStatus.textContent = "Microfone ativo.";
+      sendMicrophoneStatus();
+    } else {
+      handleMicrophoneSuspended();
+    }
+    return;
+  }
+  if (microphoneStream) return;
+  const requestId = currentInvitation?.request_id;
+  if (!requestId || !singingOverlay.open) return;
+  microphoneStarting = true;
   microphoneButton.disabled = true;
+  // Create and resume the context inside the tap: after awaiting getUserMedia, Firefox no longer
+  // treats the call as a user gesture and keeps the context suspended.
+  const context = new AudioContext();
+  const resumed = context.resume().catch(() => {});
   try {
-    microphoneStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
-    microphoneContext = new AudioContext();
-    await microphoneContext.resume();
+    if (!singingOverlay.open || currentInvitation?.request_id !== requestId) {
+      stream.getTracks().forEach(track => track.stop());
+      context.close();
+      return;
+    }
+    microphoneStream = stream;
+    microphoneRequestId = requestId;
+    microphoneContext = context;
+    if (context.state !== "running") {
+      await Promise.race([resumed, new Promise(resolve => setTimeout(resolve, 1000))]);
+    }
+    if (microphoneStream !== stream || currentInvitation?.request_id !== requestId) return;
     const source = microphoneContext.createMediaStreamSource(microphoneStream);
     microphoneAnalyser = microphoneContext.createAnalyser();
     microphoneAnalyser.fftSize = 2048;
@@ -887,11 +964,37 @@ microphoneButton.addEventListener("click", async () => {
     scoreStatus.textContent = scoringMode === "vocal" ?
       "Microfone ativo. Solta a voz! Cante para calibrar." : "Microfone ativo. Cante junto com as barras.";
     microphoneButton.textContent = "Microfone ativo";
+    for (const track of stream.getAudioTracks()) {
+      track.addEventListener("ended", () => {
+        if (microphoneStream !== stream) return;
+        stopMicrophone();
+        scoreStatus.textContent = "Microfone desconectado. Ative novamente para cantar.";
+      });
+      track.addEventListener("mute", sendMicrophoneStatus);
+      track.addEventListener("unmute", sendMicrophoneStatus);
+    }
+    context.addEventListener("statechange", () => {
+      if (microphoneStream !== stream || microphoneContext !== context) return;
+      if (context.state === "running") {
+        microphoneButton.textContent = "Microfone ativo";
+        microphoneButton.disabled = true;
+        sendMicrophoneStatus();
+      } else if (context.state !== "closed") {
+        handleMicrophoneSuspended();
+      }
+    });
+    sendMicrophoneStatus();
     sampleMicrophone();
-  } catch {
+  } catch (problem) {
+    console.error("Falha ao ativar o microfone", problem);
+    if (microphoneContext !== context && context.state !== "closed") context.close();
     stopMicrophone();
-    microphoneButton.disabled = false;
-    scoreStatus.textContent = "Não foi possível acessar o microfone. Verifique a permissão e o HTTPS.";
+    scoreStatus.textContent = microphoneErrorMessage(problem);
+  } finally {
+    microphoneStarting = false;
+    microphoneButton.disabled = (!!microphoneStream && microphoneContext?.state === "running") ||
+      !navigator.mediaDevices?.getUserMedia;
+    if (microphoneStream && microphoneContext?.state !== "running") handleMicrophoneSuspended();
   }
 });
 
@@ -923,9 +1026,9 @@ microphonePermissionButton.addEventListener("click", async () => {
     microphonePermissionStatusTimer = setTimeout(() => {
       microphonePermissionStatus.hidden = true;
     }, 10000);
-  } catch {
+  } catch (problem) {
     microphonePermissionStatus.dataset.state = "error";
-    microphonePermissionStatus.textContent = "Não foi possível acessar o microfone. Verifique a permissão e o HTTPS.";
+    microphonePermissionStatus.textContent = microphoneErrorMessage(problem);
     microphonePermissionStatus.hidden = false;
   } finally {
     microphonePermissionButton.disabled = false;

@@ -214,6 +214,11 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
         boost_used = bool(invitation and boost_state and boost_state.get("used")
                           and boost_state.get("request_id") == invitation["request_id"])
         singers = [dict(row) for row in database.execute("SELECT id, name FROM singers ORDER BY name, id")]
+        microphone_ready_singers = [row["singer_id"] for row in database.execute(
+            "SELECT DISTINCT singer_id FROM microphone_sessions WHERE request_id = ? AND updated_at > ? "
+            "ORDER BY singer_id",
+            (invitation["request_id"] if invitation and invitation["accepted"] else None, time.time() - 5),
+        )]
         scoreboards = {singer["id"]: scoreboard_snapshot(database, singer["id"]) for singer in singers}
         scores = []
         scoring_mode = None
@@ -255,6 +260,7 @@ def party_snapshot(include_caption_bars: bool = False) -> dict:
                 "caption_tracks": caption_tracks, "caption_track_id": active_caption_track_id,
                 "scores": scores, "scoreboards": scoreboards, "ranking_max": max_score(),
                 "scoring_mode": scoring_mode,
+                "microphone_ready_singers": microphone_ready_singers,
                 "vocal_calibration_ms": vocal_calibration_ms(),
                 "vocal_evaluation_ms": vocal_evaluation_ms(),
                 "vocal_boost_fill_ms": vocal_boost_fill_ms(),
@@ -409,6 +415,7 @@ async def requests_socket(websocket: WebSocket) -> None:
     await websocket.accept()
     singer_id = None
     is_tv = False
+    microphone_connection_id = str(uuid4())
     try:
         message = await asyncio.wait_for(websocket.receive_json(), timeout=5)
         token = message.get("token") if isinstance(message, dict) else None
@@ -657,6 +664,42 @@ async def requests_socket(websocket: WebSocket) -> None:
                     "type": "boost_request", "request_id": request_id, "singer_id": singer_id,
                 })
                 continue
+            if not is_tv and message.get("type") == "microphone_status":
+                request_id = message.get("request_id")
+                ready = message.get("ready")
+                if not isinstance(request_id, str) or not isinstance(ready, bool):
+                    continue
+                with connection() as database:
+                    database.execute("BEGIN IMMEDIATE")
+                    invitation = invitation_state(database)
+                    if not invitation or invitation["request_id"] != request_id or not invitation["accepted"]:
+                        continue
+                    owner = database.execute(
+                        "SELECT singer_id FROM requests WHERE id = ?", (request_id,),
+                    ).fetchone()
+                    eligible = owner and owner["singer_id"] == singer_id and invitation["lead_accepted"]
+                    if not eligible:
+                        eligible = any(
+                            vocal["singer_id"] == singer_id and vocal["joined"]
+                            and vocal["accepted"] and vocal["score_eligible"]
+                            for vocal in invitation["backvocals"]
+                        )
+                    if not eligible:
+                        continue
+                    database.execute("DELETE FROM microphone_sessions WHERE updated_at <= ?", (time.time() - 5,))
+                    if ready:
+                        database.execute(
+                            "INSERT INTO microphone_sessions(connection_id, request_id, singer_id, updated_at) "
+                            "VALUES (?, ?, ?, ?) ON CONFLICT(connection_id) DO UPDATE SET "
+                            "request_id = excluded.request_id, singer_id = excluded.singer_id, "
+                            "updated_at = excluded.updated_at",
+                            (microphone_connection_id, request_id, singer_id, time.time()),
+                        )
+                    else:
+                        database.execute(
+                            "DELETE FROM microphone_sessions WHERE connection_id = ?", (microphone_connection_id,),
+                        )
+                continue
             if message.get("type") == "microphone_activity":
                 request_id = message.get("request_id")
                 speaking = message.get("speaking")
@@ -770,6 +813,8 @@ async def requests_socket(websocket: WebSocket) -> None:
     except (WebSocketDisconnect, asyncio.TimeoutError, ValueError):
         pass
     finally:
+        with connection() as database:
+            database.execute("DELETE FROM microphone_sessions WHERE connection_id = ?", (microphone_connection_id,))
         subscribers.discard(websocket)
         tv_subscribers.discard(websocket)
         singer_subscribers.pop(websocket, None)
